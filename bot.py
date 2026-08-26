@@ -47,7 +47,7 @@ DB_PATH = os.environ.get("DB_PATH", "users.db")
 # Bir vaqtning o'zida nechta video yuklab olish mumkinligini cheklaydi —
 # serverning protsessori/tarmog'i tiqilib qolmasligi uchun. Kerak bo'lsa
 # Railway'da MAX_CONCURRENT_DOWNLOADS o'zgaruvchisi orqali oshirish/kamaytirish mumkin.
-MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "4"))
+MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "8"))
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -218,6 +218,24 @@ def _download_video_sync(url: str, ydl_opts: dict) -> str:
         return ydl.prepare_filename(info)
 
 
+async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> str:
+    """Vaqtinchalik tarmoq/bloklanish xatolarida bir necha marta qayta urinadi
+    (kutish bilan), doimiy xatolarda (masalan noto'g'ri havola) darhol
+    yt_dlp.utils.DownloadError'ni yuqoriga uzatadi."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await asyncio.to_thread(_download_video_sync, url, ydl_opts)
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            if attempt < attempts:
+                log.warning(f"Yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {e}")
+                await asyncio.sleep(2 * attempt)
+            else:
+                raise
+    raise last_error
+
+
 @router.message(F.text.startswith("http"))
 async def handle_link(message: Message, bot: Bot):
     track_user(message.from_user.id, message.from_user.username)
@@ -252,7 +270,7 @@ async def handle_link(message: Message, bot: Bot):
         async with download_semaphore:
             if was_queued:
                 await safe_edit(status, "\u23F3 Video yuklab olinmoqda...")
-            downloaded_path = await asyncio.to_thread(_download_video_sync, url, ydl_opts)
+            downloaded_path = await _download_with_retry(url, ydl_opts)
 
         if not downloaded_path or not os.path.exists(downloaded_path):
             await safe_edit(status, 
