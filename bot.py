@@ -21,7 +21,7 @@ import tempfile
 import uuid
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, FSInputFile
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.client.default import DefaultBotProperties
 import yt_dlp
 
@@ -32,6 +32,12 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 # masalan OWNER_CHAT_IDS=987654321,111222333
 _owner_ids_raw = os.environ.get("OWNER_CHAT_IDS", "").strip()
 OWNER_CHAT_IDS = [int(x.strip()) for x in _owner_ids_raw.split(",") if x.strip()]
+
+# Majburiy obuna: bot ishlatilishi uchun foydalanuvchi shu kanalga a'zo bo'lishi kerak.
+# @kanal_username shaklida kiriting (masalan @allsave_channel). Bo'sh qoldirsangiz,
+# obuna talab qilinmaydi. MUHIM: bot shu kanalga ADMIN sifatida qo'shilgan bo'lishi shart.
+REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "").strip()
+BOT_USERNAME_TAG = os.environ.get("BOT_USERNAME_TAG", "@AllSaveUz_Bot").strip()
 
 MAX_TELEGRAM_MB = 50
 
@@ -47,14 +53,54 @@ def is_allowed(user_id: int) -> bool:
     return user_id in OWNER_CHAT_IDS
 
 
+async def is_subscribed(bot: Bot, user_id: int) -> bool:
+    if not REQUIRED_CHANNEL:
+        return True  # majburiy obuna sozlanmagan
+    try:
+        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
+        return member.status not in ("left", "kicked")
+    except Exception as e:
+        log.warning(f"Obuna tekshirishda xato: {e}")
+        # Tekshira olmasak, ehtiyot bo'lib "obuna emas" deb hisoblaymiz
+        return False
+
+
+def subscribe_keyboard() -> InlineKeyboardMarkup:
+    channel_url = f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="\U0001F4E2 Kanalga o'tish", url=channel_url)],
+        [InlineKeyboardButton(text="\u2705 A'zo bo'ldim, tekshirish", callback_data="check_sub")],
+    ])
+
+
+SUBSCRIBE_TEXT = (
+    "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
+    "so'ng \"A'zo bo'ldim, tekshirish\" tugmasini bosing."
+)
+
+START_TEXT = (
+    "Salom! Instagram Reels, TikTok yoki YouTube Shorts havolasini "
+    "yuboring — videoni yuklab, sizga jo'nataman.\n\n"
+    f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
+    "bo'lgan videolarni yubora olaman."
+)
+
+
 @router.message(F.text == "/start")
-async def cmd_start(message: Message):
-    await message.answer(
-        "Salom! Instagram Reels, TikTok yoki YouTube Shorts havolasini "
-        "yuboring — videoni yuklab, sizga jo'nataman.\n\n"
-        f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
-        "bo'lgan videolarni yubora olaman."
-    )
+async def cmd_start(message: Message, bot: Bot):
+    if not await is_subscribed(bot, message.from_user.id):
+        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
+        return
+    await message.answer(START_TEXT)
+
+
+@router.callback_query(F.data == "check_sub")
+async def cb_check_sub(callback: CallbackQuery, bot: Bot):
+    if await is_subscribed(bot, callback.from_user.id):
+        await callback.message.edit_text("\u2705 Rahmat! Endi videolarni yuborishingiz mumkin.")
+        await callback.answer()
+    else:
+        await callback.answer("Hali kanalga a'zo bo'lmagansiz.", show_alert=True)
 
 
 @router.message(F.text.startswith("http"))
@@ -63,8 +109,12 @@ async def handle_link(message: Message, bot: Bot):
         await message.answer("Kechirasiz, bu bot sizga ochiq emas.")
         return
 
+    if not await is_subscribed(bot, message.from_user.id):
+        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
+        return
+
     url = message.text.strip()
-    status = await message.answer("⏳ Video yuklab olinmoqda...")
+    status = await message.answer("\u23F3 Video yuklab olinmoqda...")
 
     tmp_dir = tempfile.mkdtemp()
     out_template = os.path.join(tmp_dir, f"{uuid.uuid4().hex}.%(ext)s")
@@ -86,7 +136,7 @@ async def handle_link(message: Message, bot: Bot):
 
         if not downloaded_path or not os.path.exists(downloaded_path):
             await status.edit_text(
-                "❌ Video topilmadi yoki yuklab bo'lmadi. "
+                "\u274C Video topilmadi yoki yuklab bo'lmadi. "
                 "Havola to'g'riligini tekshiring."
             )
             return
@@ -94,28 +144,28 @@ async def handle_link(message: Message, bot: Bot):
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
             await status.edit_text(
-                f"❌ Video {size_mb:.1f} MB — bu {MAX_TELEGRAM_MB} MB "
+                f"\u274C Video {size_mb:.1f} MB — bu {MAX_TELEGRAM_MB} MB "
                 "Telegram chegarasidan katta, yubora olmayman."
             )
             return
 
-        await status.edit_text("✅ Yuklandi, yuborilmoqda...")
+        await status.edit_text("\u2705 Yuklandi, yuborilmoqda...")
         await bot.send_video(
             chat_id=message.chat.id,
             video=FSInputFile(downloaded_path),
-            caption="✅ Tayyor!",
+            caption=f"\u2705 Tayyor!\n\nBu video {BOT_USERNAME_TAG} orqali yuklab olindi \U0001F4E5",
         )
         await status.delete()
 
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
         await status.edit_text(
-            "❌ Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
+            "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
             "o'chirilgan yoki maxfiy bo'lishi mumkin."
         )
     except Exception as e:
         log.error(f"Kutilmagan xato: {e}")
-        await status.edit_text("❌ Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
+        await status.edit_text("\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
     finally:
         # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun
         try:
@@ -131,7 +181,7 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     log.info("Video bot ishga tushmoqda...")
-    await dp.start_polling(bot, allowed_updates=["message"])
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
