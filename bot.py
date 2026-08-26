@@ -44,6 +44,11 @@ BOT_USERNAME_TAG = os.environ.get("BOT_USERNAME_TAG", "@AllSaveUz_Bot").strip()
 MAX_TELEGRAM_MB = 50
 DB_PATH = os.environ.get("DB_PATH", "users.db")
 
+# Video sifatini pasaytirib, fayl hajmini kichraytiradi — tezroq yuklanadi,
+# 50 MB chegarasiga kamroq tegadi. Railway'da MAX_VIDEO_HEIGHT o'zgaruvchisi
+# orqali sozlash mumkin (masalan 360, 480, 720). Standart: 480p.
+MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")
+
 # Bir vaqtning o'zida nechta video yuklab olish mumkinligini cheklaydi —
 # serverning protsessori/tarmog'i tiqilib qolmasligi uchun. Kerak bo'lsa
 # Railway'da MAX_CONCURRENT_DOWNLOADS o'zgaruvchisi orqali oshirish/kamaytirish mumkin.
@@ -252,7 +257,11 @@ async def handle_link(message: Message, bot: Bot):
 
     ydl_opts = {
         "outtmpl": out_template,
-        "format": "mp4/best[ext=mp4]/best",
+        "format": (
+            f"best[height<={MAX_VIDEO_HEIGHT}][ext=mp4]/"
+            f"best[height<={MAX_VIDEO_HEIGHT}]/"
+            "best[ext=mp4]/best"
+        ),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
