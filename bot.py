@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramBadRequest
 import yt_dlp
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -53,6 +54,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("video-bot")
 
 router = Router()
+
+
+async def safe_edit(msg: Message, text: str, **kwargs):
+    """edit_text'ni xavfsiz chaqiradi — agar matn eskisi bilan bir xil bo'lsa
+    Telegram beradigan 'message is not modified' xatosini e'tiborsiz qoldiradi,
+    boshqa har qanday xatoni esa qayta chiqaradi."""
+    try:
+        await msg.edit_text(text, **kwargs)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            raise
 
 
 def db():
@@ -178,12 +190,13 @@ async def cmd_broadcast(message: Message, bot: Bot):
             log.warning(f"Xabar yuborilmadi ({uid}): {e}")
         if i % 25 == 0:
             try:
-                await progress.edit_text(f"\u23F3 Yuborilmoqda... ({i}/{len(user_ids)})")
+                await safe_edit(progress, f"\u23F3 Yuborilmoqda... ({i}/{len(user_ids)})")
             except Exception:
                 pass
         await asyncio.sleep(0.05)  # Telegram limitiga urilib qolmaslik uchun
 
-    await progress.edit_text(
+    await safe_edit(
+        progress,
         f"\u2705 Tugadi!\nYuborildi: {sent} ta\nYetib bormadi (bloklagan/o'chirgan): {failed} ta"
     )
 
@@ -191,7 +204,7 @@ async def cmd_broadcast(message: Message, bot: Bot):
 @router.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery, bot: Bot):
     if await is_subscribed(bot, callback.from_user.id):
-        await callback.message.edit_text("\u2705 Rahmat! Endi videolarni yuborishingiz mumkin.")
+        await safe_edit(callback.message, "\u2705 Rahmat! Endi videolarni yuborishingiz mumkin.")
         await callback.answer()
     else:
         await callback.answer("Hali kanalga a'zo bo'lmagansiz.", show_alert=True)
@@ -230,17 +243,19 @@ async def handle_link(message: Message, bot: Bot):
 
     downloaded_path = None
     try:
-        if download_semaphore.locked():
-            await status.edit_text(
+        was_queued = download_semaphore.locked()
+        if was_queued:
+            await safe_edit(status, 
                 "\u23F3 Hozir juda ko'p odam video yuklamoqda, navbatingizni kutmoqdaman..."
             )
 
         async with download_semaphore:
-            await status.edit_text("\u23F3 Video yuklab olinmoqda...")
+            if was_queued:
+                await safe_edit(status, "\u23F3 Video yuklab olinmoqda...")
             downloaded_path = await asyncio.to_thread(_download_video_sync, url, ydl_opts)
 
         if not downloaded_path or not os.path.exists(downloaded_path):
-            await status.edit_text(
+            await safe_edit(status, 
                 "\u274C Video topilmadi yoki yuklab bo'lmadi. "
                 "Havola to'g'riligini tekshiring."
             )
@@ -248,13 +263,13 @@ async def handle_link(message: Message, bot: Bot):
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
-            await status.edit_text(
+            await safe_edit(status, 
                 f"\u274C Video {size_mb:.1f} MB — bu {MAX_TELEGRAM_MB} MB "
                 "Telegram chegarasidan katta, yubora olmayman."
             )
             return
 
-        await status.edit_text("\u2705 Yuklandi, yuborilmoqda...")
+        await safe_edit(status, "\u2705 Yuklandi, yuborilmoqda...")
         await bot.send_video(
             chat_id=message.chat.id,
             video=FSInputFile(downloaded_path),
@@ -264,13 +279,13 @@ async def handle_link(message: Message, bot: Bot):
 
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
-        await status.edit_text(
+        await safe_edit(status, 
             "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
             "o'chirilgan yoki maxfiy bo'lishi mumkin."
         )
     except Exception as e:
         log.error(f"Kutilmagan xato: {e}")
-        await status.edit_text("\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
+        await safe_edit(status, "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
     finally:
         # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun
         try:
