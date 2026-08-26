@@ -17,8 +17,10 @@ ruxsatsiz ommaviy tarqatishdan saqlaning.
 import asyncio
 import logging
 import os
+import sqlite3
 import tempfile
 import uuid
+from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -40,11 +42,41 @@ REQUIRED_CHANNEL = os.environ.get("REQUIRED_CHANNEL", "").strip()
 BOT_USERNAME_TAG = os.environ.get("BOT_USERNAME_TAG", "@AllSaveUz_Bot").strip()
 
 MAX_TELEGRAM_MB = 50
+DB_PATH = os.environ.get("DB_PATH", "users.db")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-bot")
 
 router = Router()
+
+
+def db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_seen TEXT
+        )
+    """)
+    return conn
+
+
+def track_user(user_id: int, username: str):
+    conn = db()
+    conn.execute(
+        "INSERT OR IGNORE INTO users (user_id, username, first_seen) VALUES (?, ?, ?)",
+        (user_id, username or "", datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def count_users() -> int:
+    conn = db()
+    n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    conn.close()
+    return n
 
 
 def is_allowed(user_id: int) -> bool:
@@ -88,10 +120,18 @@ START_TEXT = (
 
 @router.message(F.text == "/start")
 async def cmd_start(message: Message, bot: Bot):
+    track_user(message.from_user.id, message.from_user.username)
     if not await is_subscribed(bot, message.from_user.id):
         await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
         return
     await message.answer(START_TEXT)
+
+
+@router.message(F.text == "/stats")
+async def cmd_stats(message: Message):
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return  # sozlanmagan yoki ruxsatsiz — jim turadi
+    await message.answer(f"\U0001F465 Botdan foydalangan jami odamlar: {count_users()} kishi")
 
 
 @router.callback_query(F.data == "check_sub")
@@ -105,6 +145,8 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
 
 @router.message(F.text.startswith("http"))
 async def handle_link(message: Message, bot: Bot):
+    track_user(message.from_user.id, message.from_user.username)
+
     if not is_allowed(message.from_user.id):
         await message.answer("Kechirasiz, bu bot sizga ochiq emas.")
         return
