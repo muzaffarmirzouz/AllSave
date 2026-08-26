@@ -29,9 +29,8 @@ import yt_dlp
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# Ixtiyoriy: agar bo'sh qoldirsangiz, bot HAMMAGA ochiq bo'ladi.
-# Faqat ma'lum odamlarga cheklamoqchi bo'lsangiz, vergul bilan ID kiriting:
-# masalan OWNER_CHAT_IDS=987654321,111222333
+# Faqat /stats buyrug'ini ko'ra oladigan shaxslar (vergul bilan ID kiriting).
+# Botning o'zi (video yuklab olish) hammaga ochiq — bu ro'yxatga bog'liq emas.
 _owner_ids_raw = os.environ.get("OWNER_CHAT_IDS", "").strip()
 OWNER_CHAT_IDS = [int(x.strip()) for x in _owner_ids_raw.split(",") if x.strip()]
 
@@ -77,12 +76,6 @@ def count_users() -> int:
     n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     conn.close()
     return n
-
-
-def is_allowed(user_id: int) -> bool:
-    if not OWNER_CHAT_IDS:
-        return True  # cheklov qo'yilmagan, hammaga ochiq
-    return user_id in OWNER_CHAT_IDS
 
 
 async def is_subscribed(bot: Bot, user_id: int) -> bool:
@@ -146,10 +139,6 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
 @router.message(F.text.startswith("http"))
 async def handle_link(message: Message, bot: Bot):
     track_user(message.from_user.id, message.from_user.username)
-
-    if not is_allowed(message.from_user.id):
-        await message.answer("Kechirasiz, bu bot sizga ochiq emas.")
-        return
 
     if not await is_subscribed(bot, message.from_user.id):
         await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
