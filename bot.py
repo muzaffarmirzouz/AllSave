@@ -43,6 +43,12 @@ BOT_USERNAME_TAG = os.environ.get("BOT_USERNAME_TAG", "@AllSaveUz_Bot").strip()
 MAX_TELEGRAM_MB = 50
 DB_PATH = os.environ.get("DB_PATH", "users.db")
 
+# Bir vaqtning o'zida nechta video yuklab olish mumkinligini cheklaydi —
+# serverning protsessori/tarmog'i tiqilib qolmasligi uchun. Kerak bo'lsa
+# Railway'da MAX_CONCURRENT_DOWNLOADS o'zgaruvchisi orqali oshirish/kamaytirish mumkin.
+MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "4"))
+download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-bot")
 
@@ -104,8 +110,17 @@ SUBSCRIBE_TEXT = (
 )
 
 START_TEXT = (
-    "Salom! Instagram Reels, TikTok yoki YouTube Shorts havolasini "
-    "yuboring — videoni yuklab, sizga jo'nataman.\n\n"
+    "Salom! Quyidagi platformalardan video havolasini yuboring — "
+    "yuklab, sizga jo'nataman:\n\n"
+    "\U0001F4F8 Instagram (Reels, postlar)\n"
+    "\U0001F3B5 TikTok\n"
+    "\u25B6\uFE0F YouTube (Shorts)\n"
+    "\U0001F535 VK\n"
+    "\U0001F537 Facebook\n"
+    "\u274C Twitter/X\n"
+    "\U0001F4CC Pinterest\n"
+    "\U0001F47E Twitch (clip'lar)\n"
+    "\U0001F536 Reddit\n\n"
     f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
     "bo'lgan videolarni yubora olaman."
 )
@@ -127,6 +142,52 @@ async def cmd_stats(message: Message):
     await message.answer(f"\U0001F465 Botdan foydalangan jami odamlar: {count_users()} kishi")
 
 
+@router.message(F.text.startswith("/xabar"))
+async def cmd_broadcast(message: Message, bot: Bot):
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+
+    parts = message.text.split("\n", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Foydalanish: birinchi qatorga /xabar deb yozing, "
+            "Shift+Enter bosib yangi qatorga o'ting, so'ng yubormoqchi "
+            "bo'lgan matnni yozib, hammasini BITTA xabar sifatida yuboring."
+        )
+        return
+
+    broadcast_text = parts[1]
+
+    conn = db()
+    user_ids = [row[0] for row in conn.execute("SELECT user_id FROM users").fetchall()]
+    conn.close()
+
+    if not user_ids:
+        await message.answer("Hali hech kim ro'yxatda yo'q.")
+        return
+
+    progress = await message.answer(f"\u23F3 Yuborilmoqda... (0/{len(user_ids)})")
+    sent, failed = 0, 0
+
+    for i, uid in enumerate(user_ids, start=1):
+        try:
+            await bot.send_message(uid, broadcast_text)
+            sent += 1
+        except Exception as e:
+            failed += 1
+            log.warning(f"Xabar yuborilmadi ({uid}): {e}")
+        if i % 25 == 0:
+            try:
+                await progress.edit_text(f"\u23F3 Yuborilmoqda... ({i}/{len(user_ids)})")
+            except Exception:
+                pass
+        await asyncio.sleep(0.05)  # Telegram limitiga urilib qolmaslik uchun
+
+    await progress.edit_text(
+        f"\u2705 Tugadi!\nYuborildi: {sent} ta\nYetib bormadi (bloklagan/o'chirgan): {failed} ta"
+    )
+
+
 @router.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery, bot: Bot):
     if await is_subscribed(bot, callback.from_user.id):
@@ -134,6 +195,14 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
         await callback.answer()
     else:
         await callback.answer("Hali kanalga a'zo bo'lmagansiz.", show_alert=True)
+
+
+def _download_video_sync(url: str, ydl_opts: dict) -> str:
+    """Bloklaydigan (sinxron) yuklab olish — alohida threadda ishga tushiriladi,
+    shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi."""
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
 
 
 @router.message(F.text.startswith("http"))
@@ -161,9 +230,14 @@ async def handle_link(message: Message, bot: Bot):
 
     downloaded_path = None
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            downloaded_path = ydl.prepare_filename(info)
+        if download_semaphore.locked():
+            await status.edit_text(
+                "\u23F3 Hozir juda ko'p odam video yuklamoqda, navbatingizni kutmoqdaman..."
+            )
+
+        async with download_semaphore:
+            await status.edit_text("\u23F3 Video yuklab olinmoqda...")
+            downloaded_path = await asyncio.to_thread(_download_video_sync, url, ydl_opts)
 
         if not downloaded_path or not os.path.exists(downloaded_path):
             await status.edit_text(
