@@ -215,15 +215,21 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
         await callback.answer("Hali kanalga a'zo bo'lmagansiz.", show_alert=True)
 
 
-def _download_video_sync(url: str, ydl_opts: dict) -> str:
+def _download_video_sync(url: str, ydl_opts: dict) -> dict:
     """Bloklaydigan (sinxron) yuklab olish — alohida threadda ishga tushiriladi,
-    shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi."""
+    shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi.
+    Video fayli bilan birga asl izohini (caption/description) ham qaytaradi."""
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
+        return {
+            "path": ydl.prepare_filename(info),
+            "title": (info.get("title") or "").strip(),
+            "description": (info.get("description") or "").strip(),
+            "uploader": (info.get("uploader") or info.get("uploader_id") or "").strip(),
+        }
 
 
-async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> str:
+async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> dict:
     """Vaqtinchalik tarmoq/bloklanish xatolarida bir necha marta qayta urinadi
     (kutish bilan), doimiy xatolarda (masalan noto'g'ri havola) darhol
     yt_dlp.utils.DownloadError'ni yuqoriga uzatadi."""
@@ -239,6 +245,24 @@ async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> s
             else:
                 raise
     raise last_error
+
+
+def _build_caption(result: dict) -> str:
+    """Video bilan birga yuboriladigan izohni tayyorlaydi: asl izoh (agar bo'lsa)
+    + botning o'z reklamasi. Telegram caption chegarasi (1024 belgi)dan oshmaydi."""
+    izoh = result.get("description") or result.get("title") or ""
+
+    footer = f"\n\nBu video {BOT_USERNAME_TAG} orqali yuklab olindi \U0001F4E5"
+    max_izoh_len = 1024 - len(footer) - 5  # kichik zaxira
+
+    if izoh and max_izoh_len > 10:
+        if len(izoh) > max_izoh_len:
+            izoh = izoh[:max_izoh_len].rstrip() + "..."
+        body = izoh
+    else:
+        body = ""
+
+    return (body + footer)[:1024]
 
 
 @router.message(F.text.startswith("http"))
@@ -279,7 +303,8 @@ async def handle_link(message: Message, bot: Bot):
         async with download_semaphore:
             if was_queued:
                 await safe_edit(status, "\u23F3 Video yuklab olinmoqda...")
-            downloaded_path = await _download_with_retry(url, ydl_opts)
+            result = await _download_with_retry(url, ydl_opts)
+            downloaded_path = result.get("path")
 
         if not downloaded_path or not os.path.exists(downloaded_path):
             await safe_edit(status, 
@@ -300,7 +325,7 @@ async def handle_link(message: Message, bot: Bot):
         await bot.send_video(
             chat_id=message.chat.id,
             video=FSInputFile(downloaded_path),
-            caption=f"\u2705 Tayyor!\n\nBu video {BOT_USERNAME_TAG} orqali yuklab olindi \U0001F4E5",
+            caption=_build_caption(result),
         )
         await status.delete()
 
