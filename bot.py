@@ -15,6 +15,7 @@ ruxsatsiz ommaviy tarqatishdan saqlaning.
 """
 
 import asyncio
+import base64
 import logging
 import os
 import sqlite3
@@ -54,6 +55,22 @@ MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")
 # Railway'da MAX_CONCURRENT_DOWNLOADS o'zgaruvchisi orqali oshirish/kamaytirish mumkin.
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "8"))
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+# Instagram Stories kabi ba'zi kontentni yuklash uchun "cookies" (sessiya) kerak
+# bo'lishi mumkin. IG_COOKIES_B64 — Netscape formatidagi cookies.txt faylining
+# base64 kodlangan matni (Railway Variables'ga shu ko'rinishda qo'yiladi, hech
+# qachon GitHub'ga yuklanmaydi). Bo'sh qoldirilsa, bot avvalgidek ishlaydi —
+# faqat cookies talab qiladigan kontent (masalan ba'zi Stories) yuklanmasligi mumkin.
+_ig_cookies_b64 = os.environ.get("IG_COOKIES_B64", "").strip()
+IG_COOKIES_FILE = None
+if _ig_cookies_b64:
+    try:
+        _cookies_path = os.path.join(tempfile.gettempdir(), "ig_cookies.txt")
+        with open(_cookies_path, "wb") as _f:
+            _f.write(base64.b64decode(_ig_cookies_b64))
+        IG_COOKIES_FILE = _cookies_path
+    except Exception as _e:
+        logging.getLogger("video-bot").warning(f"IG_COOKIES_B64'ni o'qishda xato: {_e}")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-bot")
@@ -291,6 +308,8 @@ async def handle_link(message: Message, bot: Bot):
         "no_warnings": True,
         "max_filesize": MAX_TELEGRAM_MB * 1024 * 1024,
     }
+    if IG_COOKIES_FILE and "instagram.com" in url:
+        ydl_opts["cookiefile"] = IG_COOKIES_FILE
 
     downloaded_path = None
     try:
@@ -331,10 +350,17 @@ async def handle_link(message: Message, bot: Bot):
 
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
-        await safe_edit(status, 
-            "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
-            "o'chirilgan yoki maxfiy bo'lishi mumkin."
-        )
+        err_text = str(e).lower()
+        if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
+            await safe_edit(status,
+                "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
+                "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
+            )
+        else:
+            await safe_edit(status, 
+                "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
+                "o'chirilgan yoki maxfiy bo'lishi mumkin."
+            )
     except Exception as e:
         log.error(f"Kutilmagan xato: {e}")
         await safe_edit(status, "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
