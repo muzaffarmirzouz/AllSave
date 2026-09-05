@@ -190,6 +190,7 @@ SUBSCRIBE_TEXT = (
 )
 
 START_TEXT = (
+    "\U0001F527 [KOD-VERSIYA: WMARK-v3] \U0001F527\n\n"
     "Salom! Quyidagi platformalardan video havolasini yuboring — "
     "yuklab, sizga jo'nataman:\n\n"
     "\U0001F4F8 Instagram (Reels, postlar)\n"
@@ -437,34 +438,43 @@ async def handle_owner_video(message: Message, bot: Bot):
     """Har qanday foydalanuvchi video yuborsa, unga GIF logo (watermark)
     qo'yib qaytaradi. Boshqa buyruqlar (link yuklab olish) kabi majburiy
     obunani ham talab qiladi."""
+    log.info(f"WMARK: handler boshlandi, user={message.from_user.id}")
     if not LOGO_GIF_FILE:
-        return  # logo hali sozlanmagan — jim o'tkazib yuboriladi
+        log.info("WMARK: LOGO_GIF_FILE yo'q, to'xtatildi")
+        return
     track_user(message.from_user.id, message.from_user.username)
 
     if not await is_subscribed(bot, message.from_user.id):
+        log.info("WMARK: obuna emas, to'xtatildi")
         await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
         return
 
     status = await message.answer("\U0001F3A8 Logo qo'yilmoqda...")
+    log.info("WMARK: status xabari yuborildi, yuklab olish boshlanmoqda")
     input_path = None
     output_path = None
     try:
         file_info = await bot.get_file(message.video.file_id)
+        log.info(f"WMARK: file_info olindi, hajmi={message.video.file_size}")
         input_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp4")
         output_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_logo.mp4")
         await bot.download_file(file_info.file_path, destination=input_path)
+        log.info("WMARK: video yuklab olindi, ffmpeg boshlanmoqda")
 
         await asyncio.wait_for(
             asyncio.to_thread(_add_watermark_sync, input_path, output_path),
             timeout=180,
         )
+        log.info("WMARK: ffmpeg tugadi, video yuborilmoqda")
 
         await bot.send_video(chat_id=message.chat.id, video=FSInputFile(output_path))
+        log.info("WMARK: video muvaffaqiyatli yuborildi")
         await status.delete()
     except asyncio.TimeoutError:
+        log.error("WMARK: TIMEOUT xatosi")
         await safe_edit(status, "\u274C Vaqt tugadi (video juda uzun bo'lishi mumkin).")
     except Exception as e:
-        log.error(f"Watermark xatosi: {e}")
+        log.error(f"WMARK: XATO -> {type(e).__name__}: {e}")
         await safe_edit(status, "\u274C Logo qo'yishda xatolik yuz berdi.")
     finally:
         for p in (input_path, output_path):
