@@ -72,6 +72,52 @@ if _ig_cookies_b64:
     except Exception as _e:
         logging.getLogger("video-bot").warning(f"IG_COOKIES_B64'ni o'qishda xato: {_e}")
 
+# Video'larga pastki-markazga qo'yiladigan animatsion GIF logo (watermark).
+# LOGO_PATH — doimiy (Railway Volume'dagi) fayl manzili, DB_PATH bilan bir xil
+# papkada saqlanadi, shuning uchun qayta deploy/restart'da HAM YO'QOLMAYDI.
+# Botga to'g'ridan-to'g'ri /setlogo orqali yangi GIF yuborib, uni istalgan
+# vaqt almashtirish mumkin — Railway Variables'ga qayta kirish shart emas.
+LOGO_PATH = os.environ.get("LOGO_PATH", os.path.join(os.path.dirname(DB_PATH) or ".", "logo.gif"))
+LOGO_GIF_FILE = LOGO_PATH if os.path.exists(LOGO_PATH) else None
+
+# LOGO_GIF_B64 — ixtiyoriy, FAQAT birinchi marta (hali hech qanday logo
+# saqlanmagan bo'lsa) boshlang'ich qiymat sifatida ishlatiladi.
+if not LOGO_GIF_FILE:
+    _logo_gif_b64 = os.environ.get("LOGO_GIF_B64", "").strip()
+    if _logo_gif_b64:
+        try:
+            os.makedirs(os.path.dirname(LOGO_PATH) or ".", exist_ok=True)
+            with open(LOGO_PATH, "wb") as _f:
+                _f.write(base64.b64decode(_logo_gif_b64))
+            LOGO_GIF_FILE = LOGO_PATH
+        except Exception as _e:
+            logging.getLogger("video-bot").warning(f"LOGO_GIF_B64'ni o'qishda xato: {_e}")
+
+# Logo qayerga qo'yilishini belgilaydi. Doimiy joyda (LOGO_PATH bilan bir xil
+# papkada) kichik matn fayl sifatida saqlanadi, shuning uchun /setposition
+# orqali tanlangan joy ham qayta deploy/restart'dan keyin ham eslab qolinadi.
+LOGO_POSITION_PATH = os.path.join(os.path.dirname(LOGO_PATH) or ".", "logo_position.txt")
+
+LOGO_POSITIONS = {
+    "top_left": ("Chap yuqori", "20:20"),
+    "top_center": ("Yuqori markaz", "(main_w-overlay_w)/2:20"),
+    "top_right": ("O'ng yuqori", "main_w-overlay_w-20:20"),
+    "center": ("Markaz", "(main_w-overlay_w)/2:(main_h-overlay_h)/2"),
+    "bottom_left": ("Chap pastki", "20:main_h-overlay_h-20"),
+    "bottom_center": ("Pastki markaz", "(main_w-overlay_w)/2:main_h-overlay_h-20"),
+    "bottom_right": ("O'ng pastki", "main_w-overlay_w-20:main_h-overlay_h-20"),
+}
+
+LOGO_POSITION = "bottom_center"
+if os.path.exists(LOGO_POSITION_PATH):
+    try:
+        with open(LOGO_POSITION_PATH, "r") as _f:
+            _saved_pos = _f.read().strip()
+        if _saved_pos in LOGO_POSITIONS:
+            LOGO_POSITION = _saved_pos
+    except Exception:
+        pass
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-bot")
 
@@ -280,6 +326,150 @@ def _build_caption(result: dict) -> str:
         body = ""
 
     return (body + footer)[:1024]
+
+
+def _add_watermark_sync(input_path: str, output_path: str) -> None:
+    """FFmpeg orqali videoga (joriy LOGO_POSITION sozlamasi bo'yicha)
+    animatsion GIF logo qo'yadi. GIF butun video davomiyligiga yetguncha
+    aylantiriladi (loop). Bloklaydigan (sinxron) funksiya — alohida
+    threadda ishga tushiriladi."""
+    import subprocess
+
+    _, xy = LOGO_POSITIONS[LOGO_POSITION]
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-stream_loop", "-1", "-i", LOGO_GIF_FILE,
+        "-filter_complex",
+        "[1:v]scale=150:-1[logo];"
+        f"[0:v][logo]overlay={xy}:shortest=1",
+        "-c:a", "copy",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg xato: {result.stderr[-500:]}")
+
+
+# Kim /setlogo buyrug'ini yuborib, hozir yangi logo GIF yuborishini kutayotganini
+# saqlaydi (bitta oddiy to'plam — alohida FSM kutubxonasi shart emas).
+_awaiting_logo_from: set = set()
+
+
+@router.message(F.text == "/setlogo")
+async def cmd_setlogo(message: Message):
+    """Bot egasi yangi logo (watermark) GIF'ini o'rnatishni boshlaydi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    _awaiting_logo_from.add(message.from_user.id)
+    await message.answer(
+        "\U0001F3A8 Yangi logo sifatida ishlatiladigan GIF'ni hozir menga yuboring.\n\n"
+        "(GIF'ni Telegram orqali oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)"
+    )
+
+
+@router.message(F.text == "/setposition")
+async def cmd_setposition(message: Message):
+    """Bot egasi logo videoning qaysi qismida chiqishini tugmalar orqali tanlaydi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    buttons = []
+    row = []
+    for key, (label, _) in LOGO_POSITIONS.items():
+        mark = "\u2705 " if key == LOGO_POSITION else ""
+        row.append(InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"logopos:{key}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    await message.answer(
+        "\U0001F4CD Logo videoning qaysi qismida chiqsin?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data.startswith("logopos:"))
+async def cb_set_position(callback: CallbackQuery):
+    if not OWNER_CHAT_IDS or callback.from_user.id not in OWNER_CHAT_IDS:
+        await callback.answer()
+        return
+    global LOGO_POSITION
+    key = callback.data.split(":", 1)[1]
+    if key not in LOGO_POSITIONS:
+        await callback.answer("Noma'lum joy.")
+        return
+    LOGO_POSITION = key
+    try:
+        with open(LOGO_POSITION_PATH, "w") as _f:
+            _f.write(key)
+    except Exception as e:
+        log.warning(f"LOGO_POSITION saqlashda xato: {e}")
+    label = LOGO_POSITIONS[key][0]
+    await callback.message.edit_text(f"\u2705 Logo joyi o'zgartirildi: {label}")
+    await callback.answer()
+
+
+@router.message(F.animation | F.document)
+async def handle_logo_upload(message: Message, bot: Bot):
+    """/setlogo buyrug'idan keyin yuborilgan GIF'ni doimiy joyga saqlaydi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    if message.from_user.id not in _awaiting_logo_from:
+        return
+    _awaiting_logo_from.discard(message.from_user.id)
+
+    file_id = message.animation.file_id if message.animation else message.document.file_id
+    try:
+        file_info = await bot.get_file(file_id)
+        os.makedirs(os.path.dirname(LOGO_PATH) or ".", exist_ok=True)
+        await bot.download_file(file_info.file_path, destination=LOGO_PATH)
+        global LOGO_GIF_FILE
+        LOGO_GIF_FILE = LOGO_PATH
+        await message.answer("\u2705 Yangi logo saqlandi! Endi shu GIF video'larga qo'yiladi.")
+    except Exception as e:
+        log.error(f"Logo saqlashda xato: {e}")
+        await message.answer("\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
+
+
+@router.message(F.video)
+async def handle_owner_video(message: Message, bot: Bot):
+    """Bot egasi to'g'ridan-to'g'ri video yuborsa, unga GIF logo (watermark)
+    qo'yib qaytaradi. Boshqa foydalanuvchilar uchun bu funksiya ishlamaydi —
+    ular uchun video yuborish oddiy e'tiborsiz qoldiriladi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    if not LOGO_GIF_FILE:
+        await message.answer(
+            "\u26A0\uFE0F LOGO_GIF_B64 sozlanmagan. Railway'da shu o'zgaruvchini qo'shing."
+        )
+        return
+
+    status = await message.answer("\U0001F3A8 Logo qo'yilmoqda...")
+    input_path = None
+    output_path = None
+    try:
+        file_info = await bot.get_file(message.video.file_id)
+        input_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp4")
+        output_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_logo.mp4")
+        await bot.download_file(file_info.file_path, destination=input_path)
+
+        await asyncio.wait_for(
+            asyncio.to_thread(_add_watermark_sync, input_path, output_path),
+            timeout=180,
+        )
+
+        await bot.send_video(chat_id=message.chat.id, video=FSInputFile(output_path))
+        await status.delete()
+    except asyncio.TimeoutError:
+        await safe_edit(status, "\u274C Vaqt tugadi (video juda uzun bo'lishi mumkin).")
+    except Exception as e:
+        log.error(f"Watermark xatosi: {e}")
+        await safe_edit(status, "\u274C Logo qo'yishda xatolik yuz berdi.")
+    finally:
+        for p in (input_path, output_path):
+            if p and os.path.exists(p):
+                os.remove(p)
 
 
 @router.message(F.text.startswith("http"))
