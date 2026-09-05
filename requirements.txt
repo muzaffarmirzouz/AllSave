@@ -1,2 +1,2 @@
 aiogram==3.15.0
-yt-dlp
+yt-dlp[default,curl-cffi]
