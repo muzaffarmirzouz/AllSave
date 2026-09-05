@@ -190,7 +190,6 @@ SUBSCRIBE_TEXT = (
 )
 
 START_TEXT = (
-    "\U0001F527 [KOD-VERSIYA: WMARK-v3] \U0001F527\n\n"
     "Salom! Quyidagi platformalardan video havolasini yuboring — "
     "yuklab, sizga jo'nataman:\n\n"
     "\U0001F4F8 Instagram (Reels, postlar)\n"
@@ -203,7 +202,9 @@ START_TEXT = (
     "\U0001F47E Twitch (clip'lar)\n"
     "\U0001F536 Reddit\n\n"
     f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
-    "bo'lgan videolarni yubora olaman."
+    "bo'lgan videolarni yubora olaman.\n\n"
+    "\U0001F3A8 Bonus: menga to'g'ridan-to'g'ri video FAYL yuborsangiz, "
+    "uni logo bilan bezab qaytaraman!"
 )
 
 
@@ -342,7 +343,7 @@ def _add_watermark_sync(input_path: str, output_path: str) -> None:
         "-i", input_path,
         "-stream_loop", "-1", "-i", LOGO_GIF_FILE,
         "-filter_complex",
-        "[1:v]scale=150:-1[logo];"
+        "[1:v]scale=150:-1,format=rgba[logo];"
         f"[0:v][logo]overlay={xy}:shortest=1",
         "-c:a", "copy",
         output_path,
@@ -578,6 +579,14 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
     dp = Dispatcher()
     dp.include_router(router)
+
+    from aiogram.types import BotCommand
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Botni ishga tushirish / yordam"),
+        BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
+        BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
+    ])
+
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
