@@ -77,26 +77,43 @@ if _ig_cookies_b64:
 # papkada saqlanadi, shuning uchun qayta deploy/restart'da HAM YO'QOLMAYDI.
 # Botga to'g'ridan-to'g'ri /setlogo orqali yangi GIF yuborib, uni istalgan
 # vaqt almashtirish mumkin — Railway Variables'ga qayta kirish shart emas.
-LOGO_PATH = os.environ.get("LOGO_PATH", os.path.join(os.path.dirname(DB_PATH) or ".", "logo.gif"))
-LOGO_GIF_FILE = LOGO_PATH if os.path.exists(LOGO_PATH) else None
+# Video'larga pastki-markazga qo'yiladigan animatsion logo (watermark) —
+# GIF yoki WEBM (Telegram video-stiker) bo'lishi mumkin. LOGO_DIR — doimiy
+# (Railway Volume'dagi) papka, DB_PATH bilan bir xil joyda, shuning uchun
+# qayta deploy/restart'da HAM YO'QOLMAYDI. Botga to'g'ridan-to'g'ri /setlogo
+# orqali yangi fayl yuborib, uni istalgan vaqt almashtirish mumkin.
+LOGO_DIR = os.environ.get("LOGO_DIR", os.path.dirname(DB_PATH) or ".")
+
+
+def _find_existing_logo() -> str:
+    """LOGO_DIR ichida logo.gif yoki logo.webm bor-yo'qligini tekshiradi."""
+    for ext in (".webm", ".gif"):
+        p = os.path.join(LOGO_DIR, f"logo{ext}")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+LOGO_GIF_FILE = _find_existing_logo()
 
 # LOGO_GIF_B64 — ixtiyoriy, FAQAT birinchi marta (hali hech qanday logo
-# saqlanmagan bo'lsa) boshlang'ich qiymat sifatida ishlatiladi.
+# saqlanmagan bo'lsa) boshlang'ich qiymat sifatida ishlatiladi (GIF sifatida).
 if not LOGO_GIF_FILE:
     _logo_gif_b64 = os.environ.get("LOGO_GIF_B64", "").strip()
     if _logo_gif_b64:
         try:
-            os.makedirs(os.path.dirname(LOGO_PATH) or ".", exist_ok=True)
-            with open(LOGO_PATH, "wb") as _f:
+            os.makedirs(LOGO_DIR, exist_ok=True)
+            _seed_path = os.path.join(LOGO_DIR, "logo.gif")
+            with open(_seed_path, "wb") as _f:
                 _f.write(base64.b64decode(_logo_gif_b64))
-            LOGO_GIF_FILE = LOGO_PATH
+            LOGO_GIF_FILE = _seed_path
         except Exception as _e:
             logging.getLogger("video-bot").warning(f"LOGO_GIF_B64'ni o'qishda xato: {_e}")
 
 # Logo qayerga qo'yilishini belgilaydi. Doimiy joyda (LOGO_PATH bilan bir xil
 # papkada) kichik matn fayl sifatida saqlanadi, shuning uchun /setposition
 # orqali tanlangan joy ham qayta deploy/restart'dan keyin ham eslab qolinadi.
-LOGO_POSITION_PATH = os.path.join(os.path.dirname(LOGO_PATH) or ".", "logo_position.txt")
+LOGO_POSITION_PATH = os.path.join(LOGO_DIR, "logo_position.txt")
 
 LOGO_POSITIONS = {
     "top_left": ("Chap yuqori", "20:20"),
@@ -365,8 +382,11 @@ async def cmd_setlogo(message: Message):
         return
     _awaiting_logo_from.add(message.from_user.id)
     await message.answer(
-        "\U0001F3A8 Yangi logo sifatida ishlatiladigan GIF'ni hozir menga yuboring.\n\n"
-        "(GIF'ni Telegram orqali oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)"
+        "\U0001F3A8 Yangi logo sifatida ishlatiladigan GIF yoki video-stikerni "
+        "hozir menga yuboring.\n\n"
+        "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas. Eski turdagi "
+        "vektor stikerlar, .tgs, qabul qilinmaydi \u2014 avval @tgstogifbot orqali "
+        "GIF'ga o'giring.)"
     )
 
 
@@ -412,23 +432,49 @@ async def cb_set_position(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.animation | F.document)
+@router.message(F.animation | F.document | F.sticker)
 async def handle_logo_upload(message: Message, bot: Bot):
-    """/setlogo buyrug'idan keyin yuborilgan GIF'ni doimiy joyga saqlaydi."""
+    """/setlogo buyrug'idan keyin yuborilgan GIF, video-stiker (.webm) yoki
+    hujjatni doimiy joyga saqlaydi. Eski turdagi (.tgs, vektor) stikerlar
+    FFmpeg tomonidan to'g'ridan-to'g'ri o'qib bo'lmagani uchun rad etiladi."""
     if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
         return
     if message.from_user.id not in _awaiting_logo_from:
         return
-    _awaiting_logo_from.discard(message.from_user.id)
 
-    file_id = message.animation.file_id if message.animation else message.document.file_id
+    # Stiker bo'lsa: faqat "video-stiker" (.webm, VP9) qabul qilinadi.
+    # Eski ".tgs" (vektor, Lottie) stikerlar FFmpeg tomonidan o'qilmaydi.
+    if message.sticker:
+        if not message.sticker.is_video:
+            await message.answer(
+                "\u26A0\uFE0F Bu eski turdagi (vektor) stiker \u2014 to'g'ridan-to'g'ri ishlata olmayman.\n\n"
+                "Iltimos, @tgstogifbot orqali GIF'ga o'girib, o'sha GIF'ni yuboring. "
+                "Yoki \"video-stiker\" (yangi, .webm) turidagi stikerni sinab ko'ring."
+            )
+            return  # _awaiting_logo_from HALI TOZALANMAYDI — qayta urinib ko'rish mumkin
+        file_id = message.sticker.file_id
+        ext = ".webm"
+    elif message.animation:
+        file_id = message.animation.file_id
+        ext = ".gif"
+    else:
+        file_id = message.document.file_id
+        ext = ".webm" if (message.document.mime_type or "").endswith("webm") else ".gif"
+
+    _awaiting_logo_from.discard(message.from_user.id)
+    new_path = os.path.join(LOGO_DIR, f"logo{ext}")
     try:
         file_info = await bot.get_file(file_id)
-        os.makedirs(os.path.dirname(LOGO_PATH) or ".", exist_ok=True)
-        await bot.download_file(file_info.file_path, destination=LOGO_PATH)
+        os.makedirs(LOGO_DIR, exist_ok=True)
+        await bot.download_file(file_info.file_path, destination=new_path)
+        # Eski (boshqa kengaytmali) logo faylini tozalab qo'yamiz, chalkashmasin.
+        for old_ext in (".gif", ".webm"):
+            old_path = os.path.join(LOGO_DIR, f"logo{old_ext}")
+            if old_path != new_path and os.path.exists(old_path):
+                os.remove(old_path)
         global LOGO_GIF_FILE
-        LOGO_GIF_FILE = LOGO_PATH
-        await message.answer("\u2705 Yangi logo saqlandi! Endi shu GIF video'larga qo'yiladi.")
+        LOGO_GIF_FILE = new_path
+        await message.answer("\u2705 Yangi logo saqlandi! Endi shu video'larga qo'yiladi.")
     except Exception as e:
         log.error(f"Logo saqlashda xato: {e}")
         await message.answer("\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
