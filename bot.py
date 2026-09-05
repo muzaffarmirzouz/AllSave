@@ -434,15 +434,15 @@ async def handle_logo_upload(message: Message, bot: Bot):
 
 @router.message(F.video)
 async def handle_owner_video(message: Message, bot: Bot):
-    """Bot egasi to'g'ridan-to'g'ri video yuborsa, unga GIF logo (watermark)
-    qo'yib qaytaradi. Boshqa foydalanuvchilar uchun bu funksiya ishlamaydi —
-    ular uchun video yuborish oddiy e'tiborsiz qoldiriladi."""
-    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
-        return
+    """Har qanday foydalanuvchi video yuborsa, unga GIF logo (watermark)
+    qo'yib qaytaradi. Boshqa buyruqlar (link yuklab olish) kabi majburiy
+    obunani ham talab qiladi."""
     if not LOGO_GIF_FILE:
-        await message.answer(
-            "\u26A0\uFE0F LOGO_GIF_B64 sozlanmagan. Railway'da shu o'zgaruvchini qo'shing."
-        )
+        return  # logo hali sozlanmagan — jim o'tkazib yuboriladi
+    track_user(message.from_user.id, message.from_user.username)
+
+    if not await is_subscribed(bot, message.from_user.id):
+        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
         return
 
     status = await message.answer("\U0001F3A8 Logo qo'yilmoqda...")
