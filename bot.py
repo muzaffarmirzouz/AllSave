@@ -576,6 +576,11 @@ async def handle_link(message: Message, bot: Bot):
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
     if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
         ydl_opts["cookiefile"] = YT_COOKIES_FILE
+    if "youtube.com" in url or "youtu.be" in url:
+        # YouTube "web" mijozida SABR oqimini majburlab, ba'zi formatlarni
+        # URL'siz qoldirmoqda. "android"/"ios" mijozlari bu cheklovga
+        # duchor bo'lmaydi.
+        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["android", "ios"]}}
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
