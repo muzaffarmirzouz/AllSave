@@ -633,6 +633,12 @@ async def main():
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
     ])
 
+    try:
+        import curl_cffi
+        log.info(f"CURL_CFFI: mavjud, versiya={curl_cffi.__version__}")
+    except ImportError as _e:
+        log.error(f"CURL_CFFI: MAVJUD EMAS -> {_e}")
+
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
