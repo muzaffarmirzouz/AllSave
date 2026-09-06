@@ -230,7 +230,6 @@ START_TEXT = (
     "yuklab, sizga jo'nataman:\n\n"
     "\U0001F4F8 Instagram (Reels, postlar)\n"
     "\U0001F3B5 TikTok\n"
-    "\u25B6\uFE0F YouTube (Shorts)\n"
     "\U0001F535 VK\n"
     "\U0001F537 Facebook\n"
     "\u274C Twitter/X\n"
@@ -582,30 +581,13 @@ async def handle_link(message: Message, bot: Bot):
     if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
         ydl_opts["cookiefile"] = YT_COOKIES_FILE
     if "youtube.com" in url or "youtu.be" in url:
-        # "android"/"ios" client'lari cookies bilan MOS EMAS (uni butunlay rad
-        # etadi), shuning uchun "sign in" talab qiluvchi videolarda ishlamay
-        # qoladi. "tv" va "web_creator" cookies bilan MOS ishlaydigan client'lar.
+        # YouTube hozircha noturg'un ishlaydi (YouTube'ning kuchaytirilgan
+        # bot-tekshiruvi tufayli) — cookies/POT infratuzilmasi tayyor turibdi,
+        # kelajakda yt-dlp yangilanishlari bilan o'zi tuzalishi mumkin.
         extractor_args = {"youtube": {"player_client": ["mweb"]}}
         if POT_PROVIDER_URL:
             extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
         ydl_opts["extractor_args"] = extractor_args
-        # Diagnostika uchun: to'liq (verbose) chiqishni o'z logimizga yozib olamiz,
-        # bu POT provider haqiqatan aniqlanayotganini ko'rishga yordam beradi.
-        ydl_opts["quiet"] = False
-        ydl_opts["no_warnings"] = False
-        ydl_opts["verbose"] = True
-
-        class _YTDLPLogger:
-            def debug(self, msg):
-                log.info(f"YTDLP-DEBUG: {msg}")
-
-            def warning(self, msg):
-                log.warning(f"YTDLP-WARN: {msg}")
-
-            def error(self, msg):
-                log.error(f"YTDLP-ERROR: {msg}")
-
-        ydl_opts["logger"] = _YTDLPLogger()
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
@@ -653,7 +635,13 @@ async def handle_link(message: Message, bot: Bot):
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
         err_text = str(e).lower()
-        if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
+        if "youtube.com" in url or "youtu.be" in url:
+            await safe_edit(status,
+                "\u274C Hozircha YouTube'dan video yuklab bo'lmayapti \u2014 YouTube'ning "
+                "yangi himoya tizimi tufayli. Instagram, TikTok va Facebook "
+                "havolalari bilan urinib ko'ring."
+            )
+        elif "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
             await safe_edit(status,
                 "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
                 "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
@@ -689,39 +677,6 @@ async def main():
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
     ])
-
-    try:
-        import curl_cffi
-        log.info(f"CURL_CFFI: mavjud, versiya={curl_cffi.__version__}")
-    except ImportError as _e:
-        log.error(f"CURL_CFFI: MAVJUD EMAS -> {_e}")
-
-    try:
-        import yt_dlp
-        _ytdlp_ver = getattr(getattr(yt_dlp, "version", None), "__version__", None) or getattr(yt_dlp, "__version__", "noma'lum")
-        log.info(f"YT_DLP: versiya={_ytdlp_ver}")
-    except Exception as _e:
-        log.error(f"YT_DLP: versiyani aniqlashda xato -> {_e}")
-
-    if POT_PROVIDER_URL:
-        log.info(f"POT_PROVIDER: sozlangan -> {POT_PROVIDER_URL}")
-    else:
-        log.warning("POT_PROVIDER: sozlanmagan (POT_PROVIDER_URL bo'sh)")
-
-    try:
-        import bgutil_ytdlp_pot_provider
-        log.info(f"BGUTIL_PLUGIN: import muvaffaqiyatli, joyi={bgutil_ytdlp_pot_provider.__file__}")
-    except ImportError as _e:
-        log.error(f"BGUTIL_PLUGIN: IMPORT QILIB BO'LMADI -> {_e}")
-
-    try:
-        import importlib.metadata
-        _dist = importlib.metadata.distribution("bgutil-ytdlp-pot-provider")
-        log.info(f"BGUTIL_PLUGIN: PAKET O'RNATILGAN, versiya={_dist.version}")
-        for _f in _dist.files or []:
-            log.info(f"BGUTIL_PLUGIN: fayl -> {_f}")
-    except Exception as _e:
-        log.error(f"BGUTIL_PLUGIN: PAKET TOPILMADI -> {_e}")
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
