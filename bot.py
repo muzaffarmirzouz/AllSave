@@ -641,8 +641,12 @@ async def main():
     except ImportError as _e:
         log.error(f"CURL_CFFI: MAVJUD EMAS -> {_e}")
 
-    import yt_dlp
-    log.info(f"YT_DLP: versiya={yt_dlp.version.__version__}")
+    try:
+        import yt_dlp
+        _ytdlp_ver = getattr(getattr(yt_dlp, "version", None), "__version__", None) or getattr(yt_dlp, "__version__", "noma'lum")
+        log.info(f"YT_DLP: versiya={_ytdlp_ver}")
+    except Exception as _e:
+        log.error(f"YT_DLP: versiyani aniqlashda xato -> {_e}")
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
