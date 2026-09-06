@@ -585,7 +585,7 @@ async def handle_link(message: Message, bot: Bot):
         # "android"/"ios" client'lari cookies bilan MOS EMAS (uni butunlay rad
         # etadi), shuning uchun "sign in" talab qiluvchi videolarda ishlamay
         # qoladi. "tv" va "web_creator" cookies bilan MOS ishlaydigan client'lar.
-        extractor_args = {"youtube": {"player_client": ["tv", "web_creator"]}}
+        extractor_args = {"youtube": {"player_client": ["mweb"]}}
         if POT_PROVIDER_URL:
             extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
         ydl_opts["extractor_args"] = extractor_args
