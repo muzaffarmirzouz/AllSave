@@ -589,6 +589,23 @@ async def handle_link(message: Message, bot: Bot):
         if POT_PROVIDER_URL:
             extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
         ydl_opts["extractor_args"] = extractor_args
+        # Diagnostika uchun: to'liq (verbose) chiqishni o'z logimizga yozib olamiz,
+        # bu POT provider haqiqatan aniqlanayotganini ko'rishga yordam beradi.
+        ydl_opts["quiet"] = False
+        ydl_opts["no_warnings"] = False
+        ydl_opts["verbose"] = True
+
+        class _YTDLPLogger:
+            def debug(self, msg):
+                log.info(f"YTDLP-DEBUG: {msg}")
+
+            def warning(self, msg):
+                log.warning(f"YTDLP-WARN: {msg}")
+
+            def error(self, msg):
+                log.error(f"YTDLP-ERROR: {msg}")
+
+        ydl_opts["logger"] = _YTDLPLogger()
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
