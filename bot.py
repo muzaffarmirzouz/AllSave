@@ -708,6 +708,12 @@ async def main():
     else:
         log.warning("POT_PROVIDER: sozlanmagan (POT_PROVIDER_URL bo'sh)")
 
+    try:
+        import bgutil_ytdlp_pot_provider
+        log.info(f"BGUTIL_PLUGIN: import muvaffaqiyatli, joyi={bgutil_ytdlp_pot_provider.__file__}")
+    except ImportError as _e:
+        log.error(f"BGUTIL_PLUGIN: IMPORT QILIB BO'LMADI -> {_e}")
+
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
