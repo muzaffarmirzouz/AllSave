@@ -611,7 +611,9 @@ async def handle_link(message: Message, bot: Bot):
                 "o'chirilgan yoki maxfiy bo'lishi mumkin."
             )
     except Exception as e:
-        log.error(f"Kutilmagan xato: {e}")
+        import traceback
+        log.error(f"Kutilmagan xato: turi={type(e).__name__}, tafsilot={e!r}")
+        log.error(traceback.format_exc())
         await safe_edit(status, "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
     finally:
         # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun
