@@ -72,6 +72,20 @@ if _ig_cookies_b64:
     except Exception as _e:
         logging.getLogger("video-bot").warning(f"IG_COOKIES_B64'ni o'qishda xato: {_e}")
 
+# YouTube "Sign in to confirm you're not a bot" tekshiruvini chetlab o'tish
+# uchun ham xuddi shunday cookies kerak bo'lishi mumkin. YT_COOKIES_B64 —
+# youtube.com'dan eksport qilingan cookies.txt faylining base64 matni.
+_yt_cookies_b64 = os.environ.get("YT_COOKIES_B64", "").strip()
+YT_COOKIES_FILE = None
+if _yt_cookies_b64:
+    try:
+        _yt_cookies_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+        with open(_yt_cookies_path, "wb") as _f:
+            _f.write(base64.b64decode(_yt_cookies_b64))
+        YT_COOKIES_FILE = _yt_cookies_path
+    except Exception as _e:
+        logging.getLogger("video-bot").warning(f"YT_COOKIES_B64'ni o'qishda xato: {_e}")
+
 # Video'larga pastki-markazga qo'yiladigan animatsion GIF logo (watermark).
 # LOGO_PATH — doimiy (Railway Volume'dagi) fayl manzili, DB_PATH bilan bir xil
 # papkada saqlanadi, shuning uchun qayta deploy/restart'da HAM YO'QOLMAYDI.
@@ -557,6 +571,8 @@ async def handle_link(message: Message, bot: Bot):
     }
     if IG_COOKIES_FILE and "instagram.com" in url:
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
+    if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
+        ydl_opts["cookiefile"] = YT_COOKIES_FILE
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
