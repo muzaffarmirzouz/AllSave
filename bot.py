@@ -86,6 +86,11 @@ if _yt_cookies_b64:
     except Exception as _e:
         logging.getLogger("video-bot").warning(f"YT_COOKIES_B64'ni o'qishda xato: {_e}")
 
+# YouTube PO Token provider xizmatining (bgutil-ytdlp-pot-provider) ichki
+# manzili — Railway'da alohida servis sifatida joylashtiriladi. Masalan:
+# "http://bgutil-pot-provider.railway.internal:4416"
+POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
+
 # Video'larga pastki-markazga qo'yiladigan animatsion GIF logo (watermark).
 # LOGO_PATH — doimiy (Railway Volume'dagi) fayl manzili, DB_PATH bilan bir xil
 # papkada saqlanadi, shuning uchun qayta deploy/restart'da HAM YO'QOLMAYDI.
@@ -580,7 +585,10 @@ async def handle_link(message: Message, bot: Bot):
         # "android"/"ios" client'lari cookies bilan MOS EMAS (uni butunlay rad
         # etadi), shuning uchun "sign in" talab qiluvchi videolarda ishlamay
         # qoladi. "tv" va "web_creator" cookies bilan MOS ishlaydigan client'lar.
-        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["tv", "web_creator"]}}
+        extractor_args = {"youtube": {"player_client": ["tv", "web_creator"]}}
+        if POT_PROVIDER_URL:
+            extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+        ydl_opts["extractor_args"] = extractor_args
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
@@ -677,6 +685,11 @@ async def main():
         log.info(f"YT_DLP: versiya={_ytdlp_ver}")
     except Exception as _e:
         log.error(f"YT_DLP: versiyani aniqlashda xato -> {_e}")
+
+    if POT_PROVIDER_URL:
+        log.info(f"POT_PROVIDER: sozlangan -> {POT_PROVIDER_URL}")
+    else:
+        log.warning("POT_PROVIDER: sozlanmagan (POT_PROVIDER_URL bo'sh)")
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
