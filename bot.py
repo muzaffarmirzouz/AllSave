@@ -56,35 +56,49 @@ MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "8"))
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+# Doimiy (Railway Volume'dagi) papka — DB_PATH bilan bir xil joyda, shuning
+# uchun qayta deploy/restart'da fayllar YO'QOLMAYDI.
+PERSIST_DIR = os.path.dirname(DB_PATH) or "."
+
+
+def _find_existing_persist_file(name: str) -> str:
+    p = os.path.join(PERSIST_DIR, name)
+    return p if os.path.exists(p) else None
+
+
 # Instagram Stories kabi ba'zi kontentni yuklash uchun "cookies" (sessiya) kerak
-# bo'lishi mumkin. IG_COOKIES_B64 — Netscape formatidagi cookies.txt faylining
-# base64 kodlangan matni (Railway Variables'ga shu ko'rinishda qo'yiladi, hech
-# qachon GitHub'ga yuklanmaydi). Bo'sh qoldirilsa, bot avvalgidek ishlaydi —
-# faqat cookies talab qiladigan kontent (masalan ba'zi Stories) yuklanmasligi mumkin.
-_ig_cookies_b64 = os.environ.get("IG_COOKIES_B64", "").strip()
-IG_COOKIES_FILE = None
-if _ig_cookies_b64:
-    try:
-        _cookies_path = os.path.join(tempfile.gettempdir(), "ig_cookies.txt")
-        with open(_cookies_path, "wb") as _f:
-            _f.write(base64.b64decode(_ig_cookies_b64))
-        IG_COOKIES_FILE = _cookies_path
-    except Exception as _e:
-        logging.getLogger("video-bot").warning(f"IG_COOKIES_B64'ni o'qishda xato: {_e}")
+# bo'lishi mumkin. Botga to'g'ridan-to'g'ri /setcookies_ig orqali yangi
+# cookies.txt yuborib, uni istalgan vaqt yangilash mumkin (Railway Variables'ga
+# kirish shart emas). IG_COOKIES_B64 — FAQAT birinchi marta (hali hech qanday
+# fayl saqlanmagan bo'lsa) boshlang'ich qiymat sifatida ishlatiladi.
+IG_COOKIES_FILE = _find_existing_persist_file("ig_cookies.txt")
+if not IG_COOKIES_FILE:
+    _ig_cookies_b64 = os.environ.get("IG_COOKIES_B64", "").strip()
+    if _ig_cookies_b64:
+        try:
+            os.makedirs(PERSIST_DIR, exist_ok=True)
+            _cookies_path = os.path.join(PERSIST_DIR, "ig_cookies.txt")
+            with open(_cookies_path, "wb") as _f:
+                _f.write(base64.b64decode(_ig_cookies_b64))
+            IG_COOKIES_FILE = _cookies_path
+        except Exception as _e:
+            logging.getLogger("video-bot").warning(f"IG_COOKIES_B64'ni o'qishda xato: {_e}")
 
 # YouTube "Sign in to confirm you're not a bot" tekshiruvini chetlab o'tish
-# uchun ham xuddi shunday cookies kerak bo'lishi mumkin. YT_COOKIES_B64 —
-# youtube.com'dan eksport qilingan cookies.txt faylining base64 matni.
-_yt_cookies_b64 = os.environ.get("YT_COOKIES_B64", "").strip()
-YT_COOKIES_FILE = None
-if _yt_cookies_b64:
-    try:
-        _yt_cookies_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
-        with open(_yt_cookies_path, "wb") as _f:
-            _f.write(base64.b64decode(_yt_cookies_b64))
-        YT_COOKIES_FILE = _yt_cookies_path
-    except Exception as _e:
-        logging.getLogger("video-bot").warning(f"YT_COOKIES_B64'ni o'qishda xato: {_e}")
+# uchun ham xuddi shunday cookies kerak bo'lishi mumkin. Botga /setcookies_yt
+# orqali yangilanadi. YT_COOKIES_B64 — faqat boshlang'ich qiymat.
+YT_COOKIES_FILE = _find_existing_persist_file("yt_cookies.txt")
+if not YT_COOKIES_FILE:
+    _yt_cookies_b64 = os.environ.get("YT_COOKIES_B64", "").strip()
+    if _yt_cookies_b64:
+        try:
+            os.makedirs(PERSIST_DIR, exist_ok=True)
+            _yt_cookies_path = os.path.join(PERSIST_DIR, "yt_cookies.txt")
+            with open(_yt_cookies_path, "wb") as _f:
+                _f.write(base64.b64decode(_yt_cookies_b64))
+            YT_COOKIES_FILE = _yt_cookies_path
+        except Exception as _e:
+            logging.getLogger("video-bot").warning(f"YT_COOKIES_B64'ni o'qishda xato: {_e}")
 
 # YouTube PO Token provider xizmatining (bgutil-ytdlp-pot-provider) ichki
 # manzili — Railway'da alohida servis sifatida joylashtiriladi. Masalan:
@@ -101,7 +115,7 @@ POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 # (Railway Volume'dagi) papka, DB_PATH bilan bir xil joyda, shuning uchun
 # qayta deploy/restart'da HAM YO'QOLMAYDI. Botga to'g'ridan-to'g'ri /setlogo
 # orqali yangi fayl yuborib, uni istalgan vaqt almashtirish mumkin.
-LOGO_DIR = os.environ.get("LOGO_DIR", os.path.dirname(DB_PATH) or ".")
+LOGO_DIR = os.environ.get("LOGO_DIR", PERSIST_DIR)
 
 
 def _find_existing_logo() -> str:
@@ -392,6 +406,55 @@ def _add_watermark_sync(input_path: str, output_path: str) -> None:
 # saqlaydi (bitta oddiy to'plam — alohida FSM kutubxonasi shart emas).
 _awaiting_logo_from: set = set()
 
+# Kim /setcookies_ig yoki /setcookies_yt yuborib, hozir yangi cookies.txt
+# yuborishini kutayotganini saqlaydi. Qiymati "ig" yoki "yt".
+_awaiting_cookies_from: dict = {}
+
+
+@router.message(F.text == "/setcookies_ig")
+async def cmd_setcookies_ig(message: Message):
+    """Bot egasi yangi Instagram cookies.txt faylini o'rnatishni boshlaydi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    _awaiting_cookies_from[message.from_user.id] = "ig"
+    await message.answer(
+        "\U0001F36A Yangi Instagram cookies.txt faylini hozir menga yuboring "
+        "(hujjat/fayl sifatida)."
+    )
+
+
+@router.message(F.text == "/setcookies_yt")
+async def cmd_setcookies_yt(message: Message):
+    """Bot egasi yangi YouTube cookies.txt faylini o'rnatishni boshlaydi."""
+    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    _awaiting_cookies_from[message.from_user.id] = "yt"
+    await message.answer(
+        "\U0001F36A Yangi YouTube cookies.txt faylini hozir menga yuboring "
+        "(hujjat/fayl sifatida)."
+    )
+
+
+async def _handle_cookies_upload(message: Message, bot: Bot, kind: str):
+    """/setcookies_ig yoki /setcookies_yt buyrug'idan keyin yuborilgan
+    cookies.txt faylini doimiy joyga saqlaydi va darhol ishlatishni boshlaydi."""
+    filename = "ig_cookies.txt" if kind == "ig" else "yt_cookies.txt"
+    target_path = os.path.join(PERSIST_DIR, filename)
+    try:
+        file_info = await bot.get_file(message.document.file_id)
+        os.makedirs(PERSIST_DIR, exist_ok=True)
+        await bot.download_file(file_info.file_path, destination=target_path)
+        global IG_COOKIES_FILE, YT_COOKIES_FILE
+        if kind == "ig":
+            IG_COOKIES_FILE = target_path
+        else:
+            YT_COOKIES_FILE = target_path
+        label = "Instagram" if kind == "ig" else "YouTube"
+        await message.answer(f"\u2705 {label} cookies yangilandi! Darhol ishlatiladi.")
+    except Exception as e:
+        log.error(f"Cookies saqlashda xato: {e}")
+        await message.answer("\u274C Cookies saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
+
 
 @router.message(F.text == "/setlogo")
 async def cmd_setlogo(message: Message):
@@ -452,11 +515,21 @@ async def cb_set_position(callback: CallbackQuery):
 
 @router.message(F.animation | F.document | F.sticker)
 async def handle_logo_upload(message: Message, bot: Bot):
-    """/setlogo buyrug'idan keyin yuborilgan GIF, video-stiker (.webm) yoki
-    hujjatni doimiy joyga saqlaydi. Eski turdagi (.tgs, vektor) stikerlar
-    FFmpeg tomonidan to'g'ridan-to'g'ri o'qib bo'lmagani uchun rad etiladi."""
+    """/setlogo, /setcookies_ig yoki /setcookies_yt buyrug'idan keyin
+    yuborilgan faylni tegishli joyga saqlaydi. GIF/video-stiker/hujjat
+    (logo uchun) va cookies.txt (cookies uchun) qabul qilinadi. Eski
+    turdagi (.tgs, vektor) stikerlar FFmpeg tomonidan o'qib bo'lmagani
+    uchun rad etiladi."""
     if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
         return
+
+    # Avval: cookies kutilayotgan bo'lsa, shuni ustuvor ishlov beramiz.
+    cookies_kind = _awaiting_cookies_from.get(message.from_user.id)
+    if cookies_kind and message.document:
+        del _awaiting_cookies_from[message.from_user.id]
+        await _handle_cookies_upload(message, bot, cookies_kind)
+        return
+
     if message.from_user.id not in _awaiting_logo_from:
         return
 
@@ -676,6 +749,8 @@ async def main():
         BotCommand(command="start", description="Botni ishga tushirish / yordam"),
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
+        BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
+        BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
     ])
 
     log.info("Video bot ishga tushmoqda...")
