@@ -558,7 +558,11 @@ async def handle_link(message: Message, bot: Bot):
     if IG_COOKIES_FILE and "instagram.com" in url:
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
     if "instagram.com" in url:
-        ydl_opts["impersonate"] = "chrome"
+        try:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+            ydl_opts["impersonate"] = ImpersonateTarget("chrome")
+        except Exception as _e:
+            log.warning(f"ImpersonateTarget sozlashda xato (o'tkazib yuborildi): {_e}")
 
     downloaded_path = None
     try:
