@@ -714,6 +714,15 @@ async def main():
     except ImportError as _e:
         log.error(f"BGUTIL_PLUGIN: IMPORT QILIB BO'LMADI -> {_e}")
 
+    try:
+        import importlib.metadata
+        _dist = importlib.metadata.distribution("bgutil-ytdlp-pot-provider")
+        log.info(f"BGUTIL_PLUGIN: PAKET O'RNATILGAN, versiya={_dist.version}")
+        for _f in _dist.files or []:
+            log.info(f"BGUTIL_PLUGIN: fayl -> {_f}")
+    except Exception as _e:
+        log.error(f"BGUTIL_PLUGIN: PAKET TOPILMADI -> {_e}")
+
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
