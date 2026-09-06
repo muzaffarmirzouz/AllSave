@@ -557,6 +557,8 @@ async def handle_link(message: Message, bot: Bot):
     }
     if IG_COOKIES_FILE and "instagram.com" in url:
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
+    if "instagram.com" in url:
+        ydl_opts["impersonate"] = "chrome"
 
     downloaded_path = None
     try:
@@ -638,6 +640,9 @@ async def main():
         log.info(f"CURL_CFFI: mavjud, versiya={curl_cffi.__version__}")
     except ImportError as _e:
         log.error(f"CURL_CFFI: MAVJUD EMAS -> {_e}")
+
+    import yt_dlp
+    log.info(f"YT_DLP: versiya={yt_dlp.version.__version__}")
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
