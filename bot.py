@@ -564,7 +564,7 @@ async def handle_link(message: Message, bot: Bot):
 
     ydl_opts = {
         "outtmpl": out_template,
-        "format": (
+        "format": "best" if ("youtube.com" in url or "youtu.be" in url) else (
             f"bestvideo[height<={MAX_VIDEO_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/"
             f"bestvideo[height<={MAX_VIDEO_HEIGHT}]+bestaudio/"
             f"best[height<={MAX_VIDEO_HEIGHT}][ext=mp4]/"
