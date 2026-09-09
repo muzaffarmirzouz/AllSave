@@ -191,9 +191,16 @@ def db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            first_seen TEXT
+            first_seen TEXT,
+            lang TEXT
         )
     """)
+    # Eski bazalarda "lang" ustuni bo'lmasligi mumkin — xavfsiz qo'shamiz.
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN lang TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # ustun allaqachon bor
     return conn
 
 
@@ -203,6 +210,21 @@ def track_user(user_id: int, username: str):
         "INSERT OR IGNORE INTO users (user_id, username, first_seen) VALUES (?, ?, ?)",
         (user_id, username or "", datetime.now(timezone.utc).isoformat()),
     )
+    conn.commit()
+    conn.close()
+
+
+def get_user_lang(user_id: int) -> str:
+    """Foydalanuvchining saqlangan tilini qaytaradi, yoki None (hali tanlamagan)."""
+    conn = db()
+    row = conn.execute("SELECT lang FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else None
+
+
+def set_user_lang(user_id: int, lang: str):
+    conn = db()
+    conn.execute("UPDATE users SET lang = ? WHERE user_id = ?", (lang, user_id))
     conn.commit()
     conn.close()
 
@@ -226,44 +248,201 @@ async def is_subscribed(bot: Bot, user_id: int) -> bool:
         return False
 
 
-def subscribe_keyboard() -> InlineKeyboardMarkup:
-    channel_url = f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
+LANGUAGES = {"uz": "\U0001F1FA\U0001F1FF O'zbekcha", "ru": "\U0001F1F7\U0001F1FA Русский", "en": "\U0001F1EC\U0001F1E7 English"}
+
+TEXTS = {
+    "uz": {
+        "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
+        "lang_saved": "\u2705 Til o'zbekcha qilib saqlandi.",
+        "start": (
+            "Salom! Quyidagi platformalardan video havolasini yuboring — "
+            "yuklab, sizga jo'nataman:\n\n"
+            "\U0001F4F8 Instagram (Reels, postlar)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (clip'lar)\n"
+            "\U0001F536 Reddit\n\n"
+            f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
+            "bo'lgan videolarni yubora olaman.\n\n"
+            "\U0001F3A8 Bonus: menga to'g'ridan-to'g'ri video FAYL yuborsangiz, "
+            "uni logo bilan bezab qaytaraman!\n\n"
+            "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
+        ),
+        "subscribe": (
+            "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
+            "so'ng \"A'zo bo'ldim, tekshirish\" tugmasini bosing."
+        ),
+        "btn_channel": "\U0001F4E2 Kanalga o'tish",
+        "btn_check": "\u2705 A'zo bo'ldim, tekshirish",
+        "subscribed_thanks": "\u2705 Rahmat! Endi videolarni yuborishingiz mumkin.",
+        "not_subscribed_yet": "Hali kanalga a'zo bo'lmagansiz.",
+        "youtube_unavailable": (
+            "\U0001F6E0\uFE0F YouTube hozircha vaqtincha ishlamayapti \u2014 "
+            "tez orada tuzatamiz!\n\n"
+            "Hozircha Instagram, TikTok, Facebook va boshqa havolalar bilan "
+            "urinib ko'rishingiz mumkin \U0001F60A"
+        ),
+        "downloading": "\u23F3 Video yuklab olinmoqda...",
+        "queued": "\u23F3 Hozir juda ko'p odam video yuklamoqda, navbatingizni kutmoqdaman...",
+        "not_found": "\u274C Video topilmadi yoki yuklab bo'lmadi. Havola to'g'riligini tekshiring.",
+        "too_large": "\u274C Video {size:.1f} MB — bu {max} MB Telegram chegarasidan katta, yubora olmayman.",
+        "uploading": "\u2705 Yuklandi, yuborilmoqda...",
+        "login_required": (
+            "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
+            "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
+        ),
+        "generic_error": "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video o'chirilgan yoki maxfiy bo'lishi mumkin.",
+        "unexpected_error": "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
+    },
+    "ru": {
+        "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
+        "lang_saved": "\u2705 Язык сохранён: русский.",
+        "start": (
+            "Привет! Отправьте ссылку на видео с одной из платформ — "
+            "скачаю и пришлю вам:\n\n"
+            "\U0001F4F8 Instagram (Reels, посты)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (клипы)\n"
+            "\U0001F536 Reddit\n\n"
+            f"Примечание: из-за ограничений Telegram могу отправлять видео "
+            f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
+            "\U0001F3A8 Бонус: отправьте мне видео ФАЙЛОМ напрямую — "
+            "верну его с наложенным логотипом!\n\n"
+            "Язык можно изменить в любой момент через /til."
+        ),
+        "subscribe": (
+            "\u26D4 Чтобы пользоваться ботом, сначала подпишитесь на канал ниже, "
+            "затем нажмите \"Я подписался, проверить\"."
+        ),
+        "btn_channel": "\U0001F4E2 Перейти в канал",
+        "btn_check": "\u2705 Я подписался, проверить",
+        "subscribed_thanks": "\u2705 Спасибо! Теперь можете отправлять видео.",
+        "not_subscribed_yet": "Вы ещё не подписаны на канал.",
+        "youtube_unavailable": (
+            "\U0001F6E0\uFE0F YouTube временно не работает \u2014 "
+            "скоро исправим!\n\n"
+            "А пока можете попробовать ссылки с Instagram, TikTok, Facebook "
+            "и других платформ \U0001F60A"
+        ),
+        "downloading": "\u23F3 Скачиваю видео...",
+        "queued": "\u23F3 Сейчас много людей скачивают видео, жду своей очереди...",
+        "not_found": "\u274C Видео не найдено или не удалось скачать. Проверьте ссылку.",
+        "too_large": "\u274C Видео {size:.1f} МБ — это больше лимита Telegram в {max} МБ, не могу отправить.",
+        "uploading": "\u2705 Скачано, отправляю...",
+        "login_required": (
+            "\u274C Не удалось скачать этот контент \u2014 Instagram требует "
+            "\"авторизации\" для таких ссылок. Если это повторяется, сообщите владельцу бота."
+        ),
+        "generic_error": "\u274C Не удалось скачать видео. Ссылка неверна, видео удалено или приватно.",
+        "unexpected_error": "\u274C Произошла ошибка, попробуйте ещё раз чуть позже.",
+    },
+    "en": {
+        "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
+        "lang_saved": "\u2705 Language set to English.",
+        "start": (
+            "Hi! Send me a video link from one of these platforms and "
+            "I'll download it for you:\n\n"
+            "\U0001F4F8 Instagram (Reels, posts)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (clips)\n"
+            "\U0001F536 Reddit\n\n"
+            f"Note: due to Telegram limits, I can only send videos up to "
+            f"{MAX_TELEGRAM_MB} MB.\n\n"
+            "\U0001F3A8 Bonus: send me a video FILE directly and I'll return "
+            "it with a logo overlay!\n\n"
+            "You can change the language anytime with /til."
+        ),
+        "subscribe": (
+            "\u26D4 To use this bot, please first subscribe to the channel below, "
+            "then tap \"I've subscribed, check\"."
+        ),
+        "btn_channel": "\U0001F4E2 Go to channel",
+        "btn_check": "\u2705 I've subscribed, check",
+        "subscribed_thanks": "\u2705 Thanks! You can now send videos.",
+        "not_subscribed_yet": "You haven't subscribed to the channel yet.",
+        "youtube_unavailable": (
+            "\U0001F6E0\uFE0F YouTube is temporarily unavailable \u2014 "
+            "we'll fix it soon!\n\n"
+            "For now, try links from Instagram, TikTok, Facebook and other "
+            "platforms \U0001F60A"
+        ),
+        "downloading": "\u23F3 Downloading video...",
+        "queued": "\u23F3 Lots of people are downloading right now, waiting for your turn...",
+        "not_found": "\u274C Video not found or couldn't be downloaded. Please check the link.",
+        "too_large": "\u274C The video is {size:.1f} MB — that's over Telegram's {max} MB limit, I can't send it.",
+        "uploading": "\u2705 Downloaded, sending...",
+        "login_required": (
+            "\u274C Couldn't download this content \u2014 Instagram requires a "
+            "\"logged in\" session for such links. If this keeps happening, contact the bot owner."
+        ),
+        "generic_error": "\u274C Couldn't download the video. The link may be wrong, or the video deleted/private.",
+        "unexpected_error": "\u274C Something went wrong, please try again in a moment.",
+    },
+}
+
+
+def t(key: str, lang: str) -> str:
+    lang = lang if lang in TEXTS else "uz"
+    return TEXTS[lang].get(key, TEXTS["uz"].get(key, ""))
+
+
+def language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="\U0001F4E2 Kanalga o'tish", url=channel_url)],
-        [InlineKeyboardButton(text="\u2705 A'zo bo'ldim, tekshirish", callback_data="check_sub")],
+        [InlineKeyboardButton(text=label, callback_data=f"setlang:{code}")]
+        for code, label in LANGUAGES.items()
     ])
 
 
-SUBSCRIBE_TEXT = (
-    "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
-    "so'ng \"A'zo bo'ldim, tekshirish\" tugmasini bosing."
-)
-
-START_TEXT = (
-    "Salom! Quyidagi platformalardan video havolasini yuboring — "
-    "yuklab, sizga jo'nataman:\n\n"
-    "\U0001F4F8 Instagram (Reels, postlar)\n"
-    "\U0001F3B5 TikTok\n"
-    "\U0001F535 VK\n"
-    "\U0001F537 Facebook\n"
-    "\u274C Twitter/X\n"
-    "\U0001F4CC Pinterest\n"
-    "\U0001F47E Twitch (clip'lar)\n"
-    "\U0001F536 Reddit\n\n"
-    f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
-    "bo'lgan videolarni yubora olaman.\n\n"
-    "\U0001F3A8 Bonus: menga to'g'ridan-to'g'ri video FAYL yuborsangiz, "
-    "uni logo bilan bezab qaytaraman!"
-)
+def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
+    channel_url = f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_channel", lang), url=channel_url)],
+        [InlineKeyboardButton(text=t("btn_check", lang), callback_data="check_sub")],
+    ])
 
 
 @router.message(F.text == "/start")
 async def cmd_start(message: Message, bot: Bot):
     track_user(message.from_user.id, message.from_user.username)
-    if not await is_subscribed(bot, message.from_user.id):
-        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
+    lang = get_user_lang(message.from_user.id)
+    if not lang:
+        await message.answer(TEXTS["uz"]["choose_lang"], reply_markup=language_keyboard())
         return
-    await message.answer(START_TEXT)
+    if not await is_subscribed(bot, message.from_user.id):
+        await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
+        return
+    await message.answer(t("start", lang))
+
+
+@router.message(F.text == "/til")
+async def cmd_til(message: Message):
+    await message.answer(TEXTS["uz"]["choose_lang"], reply_markup=language_keyboard())
+
+
+@router.callback_query(F.data.startswith("setlang:"))
+async def cb_set_lang(callback: CallbackQuery, bot: Bot):
+    lang = callback.data.split(":", 1)[1]
+    if lang not in TEXTS:
+        await callback.answer()
+        return
+    set_user_lang(callback.from_user.id, lang)
+    await safe_edit(callback.message, t("lang_saved", lang))
+    await callback.answer()
+    if not await is_subscribed(bot, callback.from_user.id):
+        await callback.message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
+    else:
+        await callback.message.answer(t("start", lang))
 
 
 @router.message(F.text == "/stats")
@@ -322,11 +501,12 @@ async def cmd_broadcast(message: Message, bot: Bot):
 
 @router.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery, bot: Bot):
+    lang = get_user_lang(callback.from_user.id) or "uz"
     if await is_subscribed(bot, callback.from_user.id):
-        await safe_edit(callback.message, "\u2705 Rahmat! Endi videolarni yuborishingiz mumkin.")
+        await safe_edit(callback.message, t("subscribed_thanks", lang))
         await callback.answer()
     else:
-        await callback.answer("Hali kanalga a'zo bo'lmagansiz.", show_alert=True)
+        await callback.answer(t("not_subscribed_yet", lang), show_alert=True)
 
 
 def _download_video_sync(url: str, ydl_opts: dict) -> dict:
@@ -584,7 +764,8 @@ async def handle_owner_video(message: Message, bot: Bot):
 
     if not await is_subscribed(bot, message.from_user.id):
         log.info("WMARK: obuna emas, to'xtatildi")
-        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
+        lang = get_user_lang(message.from_user.id) or "uz"
+        await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
 
     status = await message.answer("\U0001F3A8 Logo qo'yilmoqda...")
@@ -623,23 +804,19 @@ async def handle_owner_video(message: Message, bot: Bot):
 @router.message(F.text.startswith("http"))
 async def handle_link(message: Message, bot: Bot):
     track_user(message.from_user.id, message.from_user.username)
+    lang = get_user_lang(message.from_user.id) or "uz"
 
     if not await is_subscribed(bot, message.from_user.id):
-        await message.answer(SUBSCRIBE_TEXT, reply_markup=subscribe_keyboard())
+        await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
 
     url = message.text.strip()
 
     if "youtube.com" in url or "youtu.be" in url:
-        await message.answer(
-            "\U0001F6E0\uFE0F YouTube hozircha vaqtincha ishlamayapti \u2014 "
-            "tez orada tuzatamiz!\n\n"
-            "Hozircha Instagram, TikTok, Facebook va boshqa havolalar bilan "
-            "urinib ko'rishingiz mumkin \U0001F60A"
-        )
+        await message.answer(t("youtube_unavailable", lang))
         return
 
-    status = await message.answer("\u23F3 Video yuklab olinmoqda...")
+    status = await message.answer(t("downloading", lang))
 
     tmp_dir = tempfile.mkdtemp()
     out_template = os.path.join(tmp_dir, f"{uuid.uuid4().hex}.%(ext)s")
@@ -693,32 +870,24 @@ async def handle_link(message: Message, bot: Bot):
     try:
         was_queued = download_semaphore.locked()
         if was_queued:
-            await safe_edit(status, 
-                "\u23F3 Hozir juda ko'p odam video yuklamoqda, navbatingizni kutmoqdaman..."
-            )
+            await safe_edit(status, t("queued", lang))
 
         async with download_semaphore:
             if was_queued:
-                await safe_edit(status, "\u23F3 Video yuklab olinmoqda...")
+                await safe_edit(status, t("downloading", lang))
             result = await _download_with_retry(url, ydl_opts)
             downloaded_path = result.get("path")
 
         if not downloaded_path or not os.path.exists(downloaded_path):
-            await safe_edit(status, 
-                "\u274C Video topilmadi yoki yuklab bo'lmadi. "
-                "Havola to'g'riligini tekshiring."
-            )
+            await safe_edit(status, t("not_found", lang))
             return
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
-            await safe_edit(status, 
-                f"\u274C Video {size_mb:.1f} MB — bu {MAX_TELEGRAM_MB} MB "
-                "Telegram chegarasidan katta, yubora olmayman."
-            )
+            await safe_edit(status, t("too_large", lang).format(size=size_mb, max=MAX_TELEGRAM_MB))
             return
 
-        await safe_edit(status, "\u2705 Yuklandi, yuborilmoqda...")
+        await safe_edit(status, t("uploading", lang))
         await bot.send_video(
             chat_id=message.chat.id,
             video=FSInputFile(downloaded_path),
@@ -730,20 +899,14 @@ async def handle_link(message: Message, bot: Bot):
         log.warning(f"Download xato: {e}")
         err_text = str(e).lower()
         if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
-            await safe_edit(status,
-                "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
-                "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
-            )
+            await safe_edit(status, t("login_required", lang))
         else:
-            await safe_edit(status, 
-                "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video "
-                "o'chirilgan yoki maxfiy bo'lishi mumkin."
-            )
+            await safe_edit(status, t("generic_error", lang))
     except Exception as e:
         import traceback
         log.error(f"Kutilmagan xato: turi={type(e).__name__}, tafsilot={e!r}")
         log.error(traceback.format_exc())
-        await safe_edit(status, "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.")
+        await safe_edit(status, t("unexpected_error", lang))
     finally:
         # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun
         try:
