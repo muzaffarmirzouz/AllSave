@@ -651,6 +651,13 @@ async def handle_link(message: Message, bot: Bot):
             "best[ext=mp4]/best"
         ),
         "merge_output_format": "mp4",
+        "postprocessor_args": {
+            # "faststart" — MP4'ning meta-ma'lumotini (moov atom) fayl BOSHIGA
+            # ko'chiradi, shunda Telegram videoni oqim sifatida darhol to'g'ri
+            # ko'rsata oladi ("qotgan kadr, faqat ovoz" muammosining yechimi.
+            "merger": ["-movflags", "+faststart"],
+            "videoconvert": ["-movflags", "+faststart"],
+        },
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
