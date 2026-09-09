@@ -243,7 +243,6 @@ START_TEXT = (
     "Salom! Quyidagi platformalardan video havolasini yuboring — "
     "yuklab, sizga jo'nataman:\n\n"
     "\U0001F4F8 Instagram (Reels, postlar)\n"
-    "\u25B6\uFE0F YouTube (Shorts)\n"
     "\U0001F3B5 TikTok\n"
     "\U0001F535 VK\n"
     "\U0001F537 Facebook\n"
@@ -630,6 +629,16 @@ async def handle_link(message: Message, bot: Bot):
         return
 
     url = message.text.strip()
+
+    if "youtube.com" in url or "youtu.be" in url:
+        await message.answer(
+            "\U0001F6E0\uFE0F YouTube hozircha vaqtincha ishlamayapti \u2014 "
+            "tez orada tuzatamiz!\n\n"
+            "Hozircha Instagram, TikTok, Facebook va boshqa havolalar bilan "
+            "urinib ko'rishingiz mumkin \U0001F60A"
+        )
+        return
+
     status = await message.answer("\u23F3 Video yuklab olinmoqda...")
 
     tmp_dir = tempfile.mkdtemp()
