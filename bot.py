@@ -801,6 +801,44 @@ async def handle_owner_video(message: Message, bot: Bot):
                 os.remove(p)
 
 
+def _ensure_telegram_compatible_sync(path: str) -> str:
+    """Video kodeki Telegram bilan mos (H.264+AAC) emasligini tekshiradi,
+    va FAQAT shunday bo'lsa qayta kodlaydi — mos bo'lsa, tezlik uchun
+    faylga tegilmaydi. Muammo bo'lsa, ASL faylni qaytaradi (xavfsiz)."""
+    import subprocess
+
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        vcodec = probe.stdout.strip().lower()
+    except Exception as e:
+        log.warning(f"ffprobe xato (asl fayl qaytariladi): {e}")
+        return path
+
+    if vcodec in ("h264",):
+        return path  # allaqachon mos — qayta kodlash shart emas
+
+    fixed_path = path.rsplit(".", 1)[0] + "_fixed.mp4"
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", path,
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+             "-c:a", "aac", "-movflags", "+faststart", fixed_path],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode == 0 and os.path.exists(fixed_path):
+            os.remove(path)
+            return fixed_path
+        log.warning(f"Qayta kodlashda xato (asl fayl qaytariladi): {result.stderr[-300:]}")
+        return path
+    except Exception as e:
+        log.warning(f"Qayta kodlashda kutilmagan xato (asl fayl qaytariladi): {e}")
+        return path
+
+
 @router.message(F.text.startswith("http"))
 async def handle_link(message: Message, bot: Bot):
     track_user(message.from_user.id, message.from_user.username)
@@ -881,6 +919,9 @@ async def handle_link(message: Message, bot: Bot):
         if not downloaded_path or not os.path.exists(downloaded_path):
             await safe_edit(status, t("not_found", lang))
             return
+
+        # Kodek Telegram bilan mosligini tekshirib, kerak bo'lsagina tuzatamiz.
+        downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
