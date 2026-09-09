@@ -243,6 +243,7 @@ START_TEXT = (
     "Salom! Quyidagi platformalardan video havolasini yuboring — "
     "yuklab, sizga jo'nataman:\n\n"
     "\U0001F4F8 Instagram (Reels, postlar)\n"
+    "\u25B6\uFE0F YouTube (Shorts)\n"
     "\U0001F3B5 TikTok\n"
     "\U0001F535 VK\n"
     "\U0001F537 Facebook\n"
@@ -636,8 +637,14 @@ async def handle_link(message: Message, bot: Bot):
 
     ydl_opts = {
         "outtmpl": out_template,
-        "format": "best" if ("youtube.com" in url or "youtu.be" in url) else (
-            f"bestvideo[height<={MAX_VIDEO_HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/"
+        "format": (
+            # Telegram VP9/AV1 kabi kodeklarni ba'zan to'g'ri ko'rsatmaydi —
+            # shuning uchun avval aynan H.264 (avc1) + AAC (m4a) ni afzal
+            # ko'ramiz, faqat topilmasa umumiyroq variantlarga o'tamiz.
+            f"bestvideo[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]+bestaudio/"
+            f"best[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]/"
+            f"bestvideo[height<={MAX_VIDEO_HEIGHT}]+bestaudio[ext=m4a]/"
             f"bestvideo[height<={MAX_VIDEO_HEIGHT}]+bestaudio/"
             f"best[height<={MAX_VIDEO_HEIGHT}][ext=mp4]/"
             f"best[height<={MAX_VIDEO_HEIGHT}]/"
@@ -653,14 +660,12 @@ async def handle_link(message: Message, bot: Bot):
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
     if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
         ydl_opts["cookiefile"] = YT_COOKIES_FILE
-    if "youtube.com" in url or "youtu.be" in url:
-        # YouTube hozircha noturg'un ishlaydi (YouTube'ning kuchaytirilgan
-        # bot-tekshiruvi tufayli) — cookies/POT infratuzilmasi tayyor turibdi,
-        # kelajakda yt-dlp yangilanishlari bilan o'zi tuzalishi mumkin.
-        extractor_args = {"youtube": {"player_client": ["mweb"]}}
-        if POT_PROVIDER_URL:
-            extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
-        ydl_opts["extractor_args"] = extractor_args
+    if POT_PROVIDER_URL and ("youtube.com" in url or "youtu.be" in url):
+        # yt-dlp'ning o'zi mos client'ni tanlashiga ruxsat beramiz — faqat
+        # POT provider manzilini beramiz, majburlab client tanlamaymiz.
+        ydl_opts["extractor_args"] = {
+            "youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}
+        }
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
@@ -708,13 +713,7 @@ async def handle_link(message: Message, bot: Bot):
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
         err_text = str(e).lower()
-        if "youtube.com" in url or "youtu.be" in url:
-            await safe_edit(status,
-                "\u274C Hozircha YouTube'dan video yuklab bo'lmayapti \u2014 YouTube'ning "
-                "yangi himoya tizimi tufayli. Instagram, TikTok va Facebook "
-                "havolalari bilan urinib ko'ring."
-            )
-        elif "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
+        if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
             await safe_edit(status,
                 "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
                 "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
