@@ -161,9 +161,9 @@ LOGO_POSITIONS = {
     "top_center": "(main_w-overlay_w)/2:20",
     "top_right": "main_w-overlay_w-20:20",
     "center": "(main_w-overlay_w)/2:(main_h-overlay_h)/2",
-    "bottom_left": "20:main_h-overlay_h-20",
-    "bottom_center": "(main_w-overlay_w)/2:main_h-overlay_h-20",
-    "bottom_right": "main_w-overlay_w-20:main_h-overlay_h-20",
+    "bottom_left": "20:main_h-overlay_h-main_h*0.15",
+    "bottom_center": "(main_w-overlay_w)/2:main_h-overlay_h-main_h*0.15",
+    "bottom_right": "main_w-overlay_w-20:main_h-overlay_h-main_h*0.15",
 }
 
 POSITION_LABELS = {
