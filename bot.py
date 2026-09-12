@@ -674,10 +674,9 @@ async def cmd_setlogo(message: Message):
     _awaiting_logo_from.add(message.from_user.id)
     await message.answer(
         "\U0001F3A8 Yangi (shaxsiy) logo sifatida ishlatiladigan GIF yoki "
-        "video-stikerni hozir menga yuboring.\n\n"
-        "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas. Eski turdagi "
-        "vektor stikerlar, .tgs, qabul qilinmaydi \u2014 avval @tgstogifbot orqali "
-        "GIF'ga o'giring.)\n\n"
+        "istalgan turdagi Telegram stikerini (video-stiker yoki animatsion "
+        "stiker) hozir menga yuboring.\n\n"
+        "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)\n\n"
         "Shundan keyin menga video HAVOLASI yuborsangiz ham, natija shu logo "
         "bilan qaytadi!"
     )
@@ -716,6 +715,21 @@ async def cb_set_position(callback: CallbackQuery):
     await callback.answer()
 
 
+def _convert_tgs_to_gif_sync(tgs_path: str, gif_path: str) -> bool:
+    """Eski turdagi (.tgs, Lottie/vektor) Telegram stikerini rlottie
+    kutubxonasi orqali GIF'ga o'giradi (FFmpeg buni o'qiy olmagani uchun
+    kerak). Bloklaydigan (sinxron) funksiya — alohida threadda ishga
+    tushiriladi. Muvaffaqiyatli bo'lsa True qaytaradi."""
+    try:
+        from rlottie_python import LottieAnimation
+        with LottieAnimation.from_tgs(tgs_path) as anim:
+            anim.save_animation(gif_path)
+        return os.path.exists(gif_path) and os.path.getsize(gif_path) > 0
+    except Exception as e:
+        log.warning(f"TGS->GIF konvertatsiyasida xato: {e}")
+        return False
+
+
 @router.message(F.animation | F.document | F.sticker)
 async def handle_logo_upload(message: Message, bot: Bot):
     """/setlogo, /setcookies_ig yoki /setcookies_yt buyrug'idan keyin
@@ -736,18 +750,17 @@ async def handle_logo_upload(message: Message, bot: Bot):
     if message.from_user.id not in _awaiting_logo_from:
         return
 
-    # Stiker bo'lsa: faqat "video-stiker" (.webm, VP9) qabul qilinadi.
-    # Eski ".tgs" (vektor, Lottie) stikerlar FFmpeg tomonidan o'qilmaydi.
+    # Stiker bo'lsa: "video-stiker" (.webm) to'g'ridan-to'g'ri, eski turdagi
+    # (".tgs", vektor/Lottie) esa rlottie orqali GIF'ga o'girilib olinadi.
+    needs_tgs_convert = False
     if message.sticker:
-        if not message.sticker.is_video:
-            await message.answer(
-                "\u26A0\uFE0F Bu eski turdagi (vektor) stiker \u2014 to'g'ridan-to'g'ri ishlata olmayman.\n\n"
-                "Iltimos, @tgstogifbot orqali GIF'ga o'girib, o'sha GIF'ni yuboring. "
-                "Yoki \"video-stiker\" (yangi, .webm) turidagi stikerni sinab ko'ring."
-            )
-            return  # _awaiting_logo_from HALI TOZALANMAYDI — qayta urinib ko'rish mumkin
-        file_id = message.sticker.file_id
-        ext = ".webm"
+        if message.sticker.is_video:
+            file_id = message.sticker.file_id
+            ext = ".webm"
+        else:
+            file_id = message.sticker.file_id
+            ext = ".gif"
+            needs_tgs_convert = True
     elif message.animation:
         file_id = message.animation.file_id
         ext = ".gif"
@@ -761,7 +774,21 @@ async def handle_logo_upload(message: Message, bot: Bot):
     try:
         file_info = await bot.get_file(file_id)
         os.makedirs(user_dir, exist_ok=True)
-        await bot.download_file(file_info.file_path, destination=new_path)
+
+        if needs_tgs_convert:
+            tgs_temp = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.tgs")
+            await bot.download_file(file_info.file_path, destination=tgs_temp)
+            ok = await asyncio.to_thread(_convert_tgs_to_gif_sync, tgs_temp, new_path)
+            os.remove(tgs_temp)
+            if not ok:
+                await message.answer(
+                    "\u274C Bu stikerni o'girib bo'lmadi. Iltimos, boshqa stiker "
+                    "sinab ko'ring, yoki https://ezgif.com/tgs-to-gif saytida "
+                    "GIF'ga o'girib, o'sha GIF'ni yuboring."
+                )
+                return
+        else:
+            await bot.download_file(file_info.file_path, destination=new_path)
         # Eski (boshqa kengaytmali) logo faylini tozalab qo'yamiz, chalkashmasin.
         for old_ext in (".gif", ".webm"):
             old_path = os.path.join(user_dir, f"logo{old_ext}")
