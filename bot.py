@@ -684,7 +684,11 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         "-filter_complex",
         # Logo videoning ENI'ga NISBATAN (85%) o'lchamlanadi.
         "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
-        "[logo]format=rgba[logo2];"
+        # unpremultiply — rlottie ba'zan "premultiplied alpha" bilan chiqaradi
+        # (rang qiymatlari shaffoflik bilan oldindan aralashtirilgan), bu esa
+        # so'nish paytida QORA rangga "cho'kib" ketishga sabab bo'ladi; shu
+        # filtr buni to'g'irlaydi (to'g'ri manbalarga zarar bermaydi).
+        "[logo]format=rgba,unpremultiply=inplace=1[logo2];"
         f"[video][logo2]overlay={xy}:shortest=1",
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
         # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
