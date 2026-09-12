@@ -602,9 +602,9 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         "-i", input_path,
         "-stream_loop", "-1", "-i", logo_file,
         "-filter_complex",
-        # Logo videoning ENI'ga NISBATAN (48%) o'lchamlanadi — shunda har
-        # qanday video o'lchamida ham logo aniq ko'zga tashlanadi.
-        "[1:v][0:v]scale2ref=w=main_w*0.48:h=ow/mdar[logo][video];"
+        # Logo videoning ENI'ga NISBATAN (60%) o'lchamlanadi — shunda har
+        # qanday video o'lchamida ham logo yaqqol ko'zga tashlanadi.
+        "[1:v][0:v]scale2ref=w=main_w*0.60:h=ow/mdar[logo][video];"
         "[logo]format=rgba[logo2];"
         f"[video][logo2]overlay={xy}:shortest=1",
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
@@ -865,9 +865,10 @@ async def handle_owner_video(message: Message, bot: Bot):
 
 
 def _ensure_telegram_compatible_sync(path: str) -> str:
-    """Video kodeki Telegram bilan mos (H.264+AAC) emasligini tekshiradi,
-    va FAQAT shunday bo'lsa qayta kodlaydi — mos bo'lsa, tezlik uchun
-    faylga tegilmaydi. Muammo bo'lsa, ASL faylni qaytaradi (xavfsiz)."""
+    """Video kodeki Telegram bilan mos (H.264) emasligini tekshiradi, va
+    FAQAT shunday bo'lsa qayta kodlaydi — mos bo'lsa, TEZLIK uchun
+    faylga tegilmaydi (logo qo'yilmagan hollarda tezroq yuboriladi).
+    Muammo bo'lsa, ASL faylni qaytaradi (xavfsiz)."""
     import subprocess
 
     try:
@@ -882,13 +883,13 @@ def _ensure_telegram_compatible_sync(path: str) -> str:
         return path
 
     if vcodec in ("h264",):
-        return path  # allaqachon mos — qayta kodlash shart emas
+        return path  # allaqachon mos — tezlik uchun qayta kodlash shart emas
 
     fixed_path = path.rsplit(".", 1)[0] + "_fixed.mp4"
     try:
         result = subprocess.run(
             ["ffmpeg", "-y", "-i", path,
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
              "-c:a", "aac", "-movflags", "+faststart", fixed_path],
             capture_output=True, text=True, timeout=180,
         )
@@ -983,11 +984,10 @@ async def handle_link(message: Message, bot: Bot):
             await safe_edit(status, t("not_found", lang))
             return
 
-        # Kodek Telegram bilan mosligini tekshirib, kerak bo'lsagina tuzatamiz.
-        downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
-
         # Agar foydalanuvchi o'zining shaxsiy logotipini sozlagan bo'lsa,
-        # havola orqali yuklangan videoga ham shuni qo'yamiz.
+        # havola orqali yuklangan videoga ham shuni qo'yamiz (bu qadam
+        # allaqachon H.264+AAC'ga qayta kodlaydi, shuning uchun keyingi
+        # kodek-tekshiruvi shart bo'lmaydi).
         user_logo = _find_user_logo(message.from_user.id)
         if user_logo:
             wm_output = downloaded_path.rsplit(".", 1)[0] + "_wm.mp4"
@@ -1000,6 +1000,12 @@ async def handle_link(message: Message, bot: Bot):
                 downloaded_path = wm_output
             except Exception as e:
                 log.warning(f"Havola-yuklashda shaxsiy logo qo'yishda xato (logosiz yuboriladi): {e}")
+                # Logo qo'yilmadi — kodek hamon mos emasligi mumkin, tekshiramiz.
+                downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
+        else:
+            # Logo yo'q — faqat kodek Telegram bilan mosligini tekshirib,
+            # kerak bo'lsagina (tezlik uchun) tuzatamiz.
+            downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
