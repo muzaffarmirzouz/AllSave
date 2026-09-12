@@ -302,7 +302,8 @@ TEXTS = {
             "bo'lgan videolarni yubora olaman.\n\n"
             "\U0001F3A8 Bonus: /setlogo orqali o'zingizning shaxsiy logotipingizni "
             "sozlab qo'ying \u2014 shundan keyin menga video FAYL yoki HAVOLA "
-            "yuborsangiz, natija o'sha logo bilan qaytadi!\n\n"
+            "yuborsangiz, natija o'sha logo bilan qaytadi! (O'chirish uchun: "
+            "/setlogo off)\n\n"
             "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
         ),
         "subscribe": (
@@ -355,6 +356,8 @@ TEXTS = {
             "yuborsangiz, shu logo bilan qaytadi."
         ),
         "logo_save_error": "\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
+        "logo_removed": "\u2705 Shaxsiy logo o'chirildi. Endi videolar logosiz qaytadi.",
+        "no_logo_to_remove": "\U0001F4A1 Sizda hozir o'chiriladigan logo yo'q.",
     },
     "ru": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -374,7 +377,7 @@ TEXTS = {
             f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
             "\U0001F3A8 Бонус: настройте свой личный логотип через /setlogo — "
             "и тогда любое видео (файлом или по ссылке) вернётся с вашим "
-            "логотипом!\n\n"
+            "логотипом! (Чтобы убрать: /setlogo off)\n\n"
             "Язык можно изменить в любой момент через /til."
         ),
         "subscribe": (
@@ -427,6 +430,8 @@ TEXTS = {
             "ФАЙЛОМ или ССЫЛКОЙ, результат вернётся с этим логотипом."
         ),
         "logo_save_error": "\u274C Ошибка при сохранении логотипа, попробуйте ещё раз.",
+        "logo_removed": "\u2705 Личный логотип удалён. Теперь видео будут без логотипа.",
+        "no_logo_to_remove": "\U0001F4A1 У вас сейчас нет логотипа для удаления.",
     },
     "en": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -446,7 +451,7 @@ TEXTS = {
             f"{MAX_TELEGRAM_MB} MB.\n\n"
             "\U0001F3A8 Bonus: set up your own personal logo with /setlogo — "
             "then any video (file or link) you send will come back with "
-            "your logo!\n\n"
+            "your logo! (To remove it: /setlogo off)\n\n"
             "You can change the language anytime with /til."
         ),
         "subscribe": (
@@ -498,6 +503,8 @@ TEXTS = {
             "the result will come back with this logo."
         ),
         "logo_save_error": "\u274C Error saving the logo, please try again.",
+        "logo_removed": "\u2705 Personal logo removed. Videos will now come back without a logo.",
+        "no_logo_to_remove": "\U0001F4A1 You don't have a logo set up to remove right now.",
     },
 }
 
@@ -755,12 +762,25 @@ async def _handle_cookies_upload(message: Message, bot: Bot, kind: str):
         await message.answer("\u274C Cookies saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
 
 
-@router.message(F.text == "/setlogo")
+@router.message(F.text.startswith("/setlogo"))
 async def cmd_setlogo(message: Message):
     """Foydalanuvchi o'zining shaxsiy logo (watermark) GIF'ini o'rnatishni
-    boshlaydi. Endi bu HAR KIM uchun ochiq — har kim o'z logosini sozlashi
-    mumkin."""
+    boshlaydi, yoki "/setlogo off" orqali uni o'chiradi. Endi bu HAR KIM
+    uchun ochiq — har kim o'z logosini sozlashi mumkin."""
     lang = get_user_lang(message.from_user.id) or "uz"
+    parts = message.text.strip().split(maxsplit=1)
+
+    if len(parts) > 1 and parts[1].strip().lower() == "off":
+        user_dir = os.path.join(USER_LOGOS_DIR, str(message.from_user.id))
+        removed = False
+        for ext in (".webm", ".apng", ".gif"):
+            p = os.path.join(user_dir, f"logo{ext}")
+            if os.path.exists(p):
+                os.remove(p)
+                removed = True
+        await message.answer(t("logo_removed" if removed else "no_logo_to_remove", lang))
+        return
+
     _awaiting_logo_from.add(message.from_user.id)
     await message.answer(t("setlogo_prompt", lang))
 
