@@ -303,7 +303,7 @@ TEXTS = {
             "\U0001F3A8 Bonus: /setlogo orqali o'zingizning shaxsiy logotipingizni "
             "sozlab qo'ying \u2014 shundan keyin menga video FAYL yoki HAVOLA "
             "yuborsangiz, natija o'sha logo bilan qaytadi! (O'chirish uchun: "
-            "/setlogo off)\n\n"
+            "/logooff)\n\n"
             "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
         ),
         "subscribe": (
@@ -377,7 +377,7 @@ TEXTS = {
             f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
             "\U0001F3A8 Бонус: настройте свой личный логотип через /setlogo — "
             "и тогда любое видео (файлом или по ссылке) вернётся с вашим "
-            "логотипом! (Чтобы убрать: /setlogo off)\n\n"
+            "логотипом! (Чтобы убрать: /logooff)\n\n"
             "Язык можно изменить в любой момент через /til."
         ),
         "subscribe": (
@@ -451,7 +451,7 @@ TEXTS = {
             f"{MAX_TELEGRAM_MB} MB.\n\n"
             "\U0001F3A8 Bonus: set up your own personal logo with /setlogo — "
             "then any video (file or link) you send will come back with "
-            "your logo! (To remove it: /setlogo off)\n\n"
+            "your logo! (To remove it: /logooff)\n\n"
             "You can change the language anytime with /til."
         ),
         "subscribe": (
@@ -762,25 +762,34 @@ async def _handle_cookies_upload(message: Message, bot: Bot, kind: str):
         await message.answer("\u274C Cookies saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
 
 
-@router.message(F.text.startswith("/setlogo"))
+async def _remove_user_logo(user_id: int) -> bool:
+    """Foydalanuvchining shaxsiy logotipini o'chiradi. Biror narsa
+    o'chirilgan bo'lsa True qaytaradi."""
+    user_dir = os.path.join(USER_LOGOS_DIR, str(user_id))
+    removed = False
+    for ext in (".webm", ".apng", ".gif"):
+        p = os.path.join(user_dir, f"logo{ext}")
+        if os.path.exists(p):
+            os.remove(p)
+            removed = True
+    return removed
+
+
+@router.message(F.text == "/logooff")
+async def cmd_logooff(message: Message):
+    """Foydalanuvchining shaxsiy logotipini bitta oddiy buyruq bilan
+    o'chiradi."""
+    lang = get_user_lang(message.from_user.id) or "uz"
+    removed = await _remove_user_logo(message.from_user.id)
+    await message.answer(t("logo_removed" if removed else "no_logo_to_remove", lang))
+
+
+@router.message(F.text == "/setlogo")
 async def cmd_setlogo(message: Message):
     """Foydalanuvchi o'zining shaxsiy logo (watermark) GIF'ini o'rnatishni
-    boshlaydi, yoki "/setlogo off" orqali uni o'chiradi. Endi bu HAR KIM
-    uchun ochiq — har kim o'z logosini sozlashi mumkin."""
+    boshlaydi. Endi bu HAR KIM uchun ochiq — har kim o'z logosini sozlashi
+    mumkin."""
     lang = get_user_lang(message.from_user.id) or "uz"
-    parts = message.text.strip().split(maxsplit=1)
-
-    if len(parts) > 1 and parts[1].strip().lower() == "off":
-        user_dir = os.path.join(USER_LOGOS_DIR, str(message.from_user.id))
-        removed = False
-        for ext in (".webm", ".apng", ".gif"):
-            p = os.path.join(user_dir, f"logo{ext}")
-            if os.path.exists(p):
-                os.remove(p)
-                removed = True
-        await message.answer(t("logo_removed" if removed else "no_logo_to_remove", lang))
-        return
-
     _awaiting_logo_from.add(message.from_user.id)
     await message.answer(t("setlogo_prompt", lang))
 
@@ -1149,6 +1158,7 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Botni ishga tushirish / yordam"),
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
+        BotCommand(command="logooff", description="Shaxsiy logoni o'chirish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
         BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
         BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
