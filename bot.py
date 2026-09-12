@@ -123,7 +123,7 @@ def _find_existing_logo() -> str:
     """LOGO_DIR ichida logo.gif yoki logo.webm bor-yo'qligini tekshiradi
     (bu — bot egasining ASOSIY/standart logotipi, hech kim shaxsiy logo
     o'rnatmagan bo'lsa ishlatiladi)."""
-    for ext in (".webm", ".gif"):
+    for ext in (".webm", ".apng", ".gif"):
         p = os.path.join(LOGO_DIR, f"logo{ext}")
         if os.path.exists(p):
             return p
@@ -133,7 +133,7 @@ def _find_existing_logo() -> str:
 def _find_user_logo(user_id: int) -> str:
     """Ma'lum bir foydalanuvchining SHAXSIY logotipini qidiradi."""
     d = os.path.join(USER_LOGOS_DIR, str(user_id))
-    for ext in (".webm", ".gif"):
+    for ext in (".webm", ".apng", ".gif"):
         p = os.path.join(d, f"logo{ext}")
         if os.path.exists(p):
             return p
@@ -682,9 +682,8 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         "-i", input_path,
         "-stream_loop", "-1", "-i", logo_file,
         "-filter_complex",
-        # Logo videoning ENI'ga NISBATAN (75%) o'lchamlanadi — juda yaqqol
-        # ko'rinadigan, katta logo hosil qiladi.
-        "[1:v][0:v]scale2ref=w=main_w*0.75:h=ow/mdar[logo][video];"
+        # Logo videoning ENI'ga NISBATAN (85%) o'lchamlanadi.
+        "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
         "[logo]format=rgba[logo2];"
         f"[video][logo2]overlay={xy}:shortest=1",
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
@@ -798,18 +797,20 @@ async def cb_set_position(callback: CallbackQuery):
     await callback.answer()
 
 
-def _convert_tgs_to_gif_sync(tgs_path: str, gif_path: str) -> bool:
+def _convert_tgs_to_apng_sync(tgs_path: str, apng_path: str) -> bool:
     """Eski turdagi (.tgs, Lottie/vektor) Telegram stikerini rlottie
-    kutubxonasi orqali GIF'ga o'giradi (FFmpeg buni o'qiy olmagani uchun
-    kerak). Bloklaydigan (sinxron) funksiya — alohida threadda ishga
-    tushiriladi. Muvaffaqiyatli bo'lsa True qaytaradi."""
+    kutubxonasi orqali APNG'ga o'giradi (GIF EMAS — GIF faqat ikkilik
+    shaffoflikni qo'llab-quvvatlaydi, shuning uchun so'nib-ketuvchi
+    animatsiyalarda orqa fon "qattiq" bo'lib ko'rinib qoladi; APNG esa
+    to'liq (256 daraja) alfa-kanalni saqlaydi). Bloklaydigan (sinxron)
+    funksiya — alohida threadda ishga tushiriladi."""
     try:
         from rlottie_python import LottieAnimation
         with LottieAnimation.from_tgs(tgs_path) as anim:
-            anim.save_animation(gif_path)
-        return os.path.exists(gif_path) and os.path.getsize(gif_path) > 0
+            anim.save_animation(apng_path)
+        return os.path.exists(apng_path) and os.path.getsize(apng_path) > 0
     except Exception as e:
-        log.warning(f"TGS->GIF konvertatsiyasida xato: {e}")
+        log.warning(f"TGS->APNG konvertatsiyasida xato: {e}")
         return False
 
 
@@ -835,7 +836,9 @@ async def handle_logo_upload(message: Message, bot: Bot):
     lang = get_user_lang(message.from_user.id) or "uz"
 
     # Stiker bo'lsa: "video-stiker" (.webm) to'g'ridan-to'g'ri, eski turdagi
-    # (".tgs", vektor/Lottie) esa rlottie orqali GIF'ga o'girilib olinadi.
+    # (".tgs", vektor/Lottie) esa rlottie orqali APNG'ga o'girilib olinadi
+    # (GIF emas — APNG to'liq alfa-kanalni saqlaydi, so'nish animatsiyalari
+    # to'g'ri, shaffof ko'rinishi uchun).
     needs_tgs_convert = False
     if message.sticker:
         if message.sticker.is_video:
@@ -843,7 +846,7 @@ async def handle_logo_upload(message: Message, bot: Bot):
             ext = ".webm"
         else:
             file_id = message.sticker.file_id
-            ext = ".gif"
+            ext = ".apng"
             needs_tgs_convert = True
     elif message.animation:
         file_id = message.animation.file_id
@@ -862,7 +865,7 @@ async def handle_logo_upload(message: Message, bot: Bot):
         if needs_tgs_convert:
             tgs_temp = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.tgs")
             await bot.download_file(file_info.file_path, destination=tgs_temp)
-            ok = await asyncio.to_thread(_convert_tgs_to_gif_sync, tgs_temp, new_path)
+            ok = await asyncio.to_thread(_convert_tgs_to_apng_sync, tgs_temp, new_path)
             os.remove(tgs_temp)
             if not ok:
                 await message.answer(t("tgs_convert_failed", lang))
@@ -870,7 +873,7 @@ async def handle_logo_upload(message: Message, bot: Bot):
         else:
             await bot.download_file(file_info.file_path, destination=new_path)
         # Eski (boshqa kengaytmali) logo faylini tozalab qo'yamiz, chalkashmasin.
-        for old_ext in (".gif", ".webm"):
+        for old_ext in (".gif", ".webm", ".apng"):
             old_path = os.path.join(user_dir, f"logo{old_ext}")
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
