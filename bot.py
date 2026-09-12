@@ -116,10 +116,13 @@ POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 # qayta deploy/restart'da HAM YO'QOLMAYDI. Botga to'g'ridan-to'g'ri /setlogo
 # orqali yangi fayl yuborib, uni istalgan vaqt almashtirish mumkin.
 LOGO_DIR = os.environ.get("LOGO_DIR", PERSIST_DIR)
+USER_LOGOS_DIR = os.path.join(LOGO_DIR, "users")
 
 
 def _find_existing_logo() -> str:
-    """LOGO_DIR ichida logo.gif yoki logo.webm bor-yo'qligini tekshiradi."""
+    """LOGO_DIR ichida logo.gif yoki logo.webm bor-yo'qligini tekshiradi
+    (bu — bot egasining ASOSIY/standart logotipi, hech kim shaxsiy logo
+    o'rnatmagan bo'lsa ishlatiladi)."""
     for ext in (".webm", ".gif"):
         p = os.path.join(LOGO_DIR, f"logo{ext}")
         if os.path.exists(p):
@@ -127,7 +130,17 @@ def _find_existing_logo() -> str:
     return None
 
 
-LOGO_GIF_FILE = _find_existing_logo()
+def _find_user_logo(user_id: int) -> str:
+    """Ma'lum bir foydalanuvchining SHAXSIY logotipini qidiradi."""
+    d = os.path.join(USER_LOGOS_DIR, str(user_id))
+    for ext in (".webm", ".gif"):
+        p = os.path.join(d, f"logo{ext}")
+        if os.path.exists(p):
+            return p
+    return None
+
+
+LOGO_GIF_FILE = _find_existing_logo()  # bot egasining standart logotipi
 
 # LOGO_GIF_B64 — ixtiyoriy, FAQAT birinchi marta (hali hech qanday logo
 # saqlanmagan bo'lsa) boshlang'ich qiymat sifatida ishlatiladi (GIF sifatida).
@@ -143,11 +156,6 @@ if not LOGO_GIF_FILE:
         except Exception as _e:
             logging.getLogger("video-bot").warning(f"LOGO_GIF_B64'ni o'qishda xato: {_e}")
 
-# Logo qayerga qo'yilishini belgilaydi. Doimiy joyda (LOGO_PATH bilan bir xil
-# papkada) kichik matn fayl sifatida saqlanadi, shuning uchun /setposition
-# orqali tanlangan joy ham qayta deploy/restart'dan keyin ham eslab qolinadi.
-LOGO_POSITION_PATH = os.path.join(LOGO_DIR, "logo_position.txt")
-
 LOGO_POSITIONS = {
     "top_left": ("Chap yuqori", "20:20"),
     "top_center": ("Yuqori markaz", "(main_w-overlay_w)/2:20"),
@@ -157,16 +165,6 @@ LOGO_POSITIONS = {
     "bottom_center": ("Pastki markaz", "(main_w-overlay_w)/2:main_h-overlay_h-20"),
     "bottom_right": ("O'ng pastki", "main_w-overlay_w-20:main_h-overlay_h-20"),
 }
-
-LOGO_POSITION = "bottom_center"
-if os.path.exists(LOGO_POSITION_PATH):
-    try:
-        with open(LOGO_POSITION_PATH, "r") as _f:
-            _saved_pos = _f.read().strip()
-        if _saved_pos in LOGO_POSITIONS:
-            LOGO_POSITION = _saved_pos
-    except Exception:
-        pass
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("video-bot")
@@ -192,15 +190,17 @@ def db():
             user_id INTEGER PRIMARY KEY,
             username TEXT,
             first_seen TEXT,
-            lang TEXT
+            lang TEXT,
+            logo_position TEXT
         )
     """)
-    # Eski bazalarda "lang" ustuni bo'lmasligi mumkin — xavfsiz qo'shamiz.
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN lang TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # ustun allaqachon bor
+    # Eski bazalarda ba'zi ustunlar bo'lmasligi mumkin — xavfsiz qo'shamiz.
+    for col in ("lang", "logo_position"):
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # ustun allaqachon bor
     return conn
 
 
@@ -225,6 +225,21 @@ def get_user_lang(user_id: int) -> str:
 def set_user_lang(user_id: int, lang: str):
     conn = db()
     conn.execute("UPDATE users SET lang = ? WHERE user_id = ?", (lang, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_user_logo_position(user_id: int) -> str:
+    conn = db()
+    row = conn.execute("SELECT logo_position FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    pos = row[0] if row and row[0] else None
+    return pos if pos in LOGO_POSITIONS else "bottom_center"
+
+
+def set_user_logo_position(user_id: int, position: str):
+    conn = db()
+    conn.execute("UPDATE users SET logo_position = ? WHERE user_id = ?", (position, user_id))
     conn.commit()
     conn.close()
 
@@ -267,8 +282,9 @@ TEXTS = {
             "\U0001F536 Reddit\n\n"
             f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
             "bo'lgan videolarni yubora olaman.\n\n"
-            "\U0001F3A8 Bonus: menga to'g'ridan-to'g'ri video FAYL yuborsangiz, "
-            "uni logo bilan bezab qaytaraman!\n\n"
+            "\U0001F3A8 Bonus: /setlogo orqali o'zingizning shaxsiy logotipingizni "
+            "sozlab qo'ying \u2014 shundan keyin menga video FAYL yoki HAVOLA "
+            "yuborsangiz, natija o'sha logo bilan qaytadi!\n\n"
             "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
         ),
         "subscribe": (
@@ -296,6 +312,10 @@ TEXTS = {
         ),
         "generic_error": "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video o'chirilgan yoki maxfiy bo'lishi mumkin.",
         "unexpected_error": "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
+        "no_personal_logo": (
+            "\U0001F4A1 Sizda hali shaxsiy logo sozlanmagan. "
+            "/setlogo orqali o'rnatib, keyin qayta urinib ko'ring."
+        ),
     },
     "ru": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -313,8 +333,9 @@ TEXTS = {
             "\U0001F536 Reddit\n\n"
             f"Примечание: из-за ограничений Telegram могу отправлять видео "
             f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
-            "\U0001F3A8 Бонус: отправьте мне видео ФАЙЛОМ напрямую — "
-            "верну его с наложенным логотипом!\n\n"
+            "\U0001F3A8 Бонус: настройте свой личный логотип через /setlogo — "
+            "и тогда любое видео (файлом или по ссылке) вернётся с вашим "
+            "логотипом!\n\n"
             "Язык можно изменить в любой момент через /til."
         ),
         "subscribe": (
@@ -342,6 +363,10 @@ TEXTS = {
         ),
         "generic_error": "\u274C Не удалось скачать видео. Ссылка неверна, видео удалено или приватно.",
         "unexpected_error": "\u274C Произошла ошибка, попробуйте ещё раз чуть позже.",
+        "no_personal_logo": (
+            "\U0001F4A1 У вас ещё не настроен личный логотип. "
+            "Настройте через /setlogo и попробуйте снова."
+        ),
     },
     "en": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -359,8 +384,9 @@ TEXTS = {
             "\U0001F536 Reddit\n\n"
             f"Note: due to Telegram limits, I can only send videos up to "
             f"{MAX_TELEGRAM_MB} MB.\n\n"
-            "\U0001F3A8 Bonus: send me a video FILE directly and I'll return "
-            "it with a logo overlay!\n\n"
+            "\U0001F3A8 Bonus: set up your own personal logo with /setlogo — "
+            "then any video (file or link) you send will come back with "
+            "your logo!\n\n"
             "You can change the language anytime with /til."
         ),
         "subscribe": (
@@ -388,6 +414,10 @@ TEXTS = {
         ),
         "generic_error": "\u274C Couldn't download the video. The link may be wrong, or the video deleted/private.",
         "unexpected_error": "\u274C Something went wrong, please try again in a moment.",
+        "no_personal_logo": (
+            "\U0001F4A1 You haven't set up a personal logo yet. "
+            "Set one up with /setlogo and try again."
+        ),
     },
 }
 
@@ -559,18 +589,18 @@ def _build_caption(result: dict) -> str:
     return (body + footer)[:1024]
 
 
-def _add_watermark_sync(input_path: str, output_path: str) -> None:
-    """FFmpeg orqali videoga (joriy LOGO_POSITION sozlamasi bo'yicha)
-    animatsion GIF logo qo'yadi. GIF butun video davomiyligiga yetguncha
-    aylantiriladi (loop). Bloklaydigan (sinxron) funksiya — alohida
-    threadda ishga tushiriladi."""
+def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
+    """FFmpeg orqali videoga berilgan logo faylni, berilgan pozitsiyada
+    qo'yadi. GIF/WEBM butun video davomiyligiga yetguncha aylantiriladi
+    (loop). Bloklaydigan (sinxron) funksiya — alohida threadda ishga
+    tushiriladi."""
     import subprocess
 
-    _, xy = LOGO_POSITIONS[LOGO_POSITION]
+    _, xy = LOGO_POSITIONS.get(position, LOGO_POSITIONS["bottom_center"])
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
-        "-stream_loop", "-1", "-i", LOGO_GIF_FILE,
+        "-stream_loop", "-1", "-i", logo_file,
         "-filter_complex",
         "[1:v]scale=150:-1,format=rgba[logo];"
         f"[0:v][logo]overlay={xy}:shortest=1",
@@ -638,28 +668,30 @@ async def _handle_cookies_upload(message: Message, bot: Bot, kind: str):
 
 @router.message(F.text == "/setlogo")
 async def cmd_setlogo(message: Message):
-    """Bot egasi yangi logo (watermark) GIF'ini o'rnatishni boshlaydi."""
-    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
-        return
+    """Foydalanuvchi o'zining shaxsiy logo (watermark) GIF'ini o'rnatishni
+    boshlaydi. Endi bu HAR KIM uchun ochiq — har kim o'z logosini sozlashi
+    mumkin."""
     _awaiting_logo_from.add(message.from_user.id)
     await message.answer(
-        "\U0001F3A8 Yangi logo sifatida ishlatiladigan GIF yoki video-stikerni "
-        "hozir menga yuboring.\n\n"
+        "\U0001F3A8 Yangi (shaxsiy) logo sifatida ishlatiladigan GIF yoki "
+        "video-stikerni hozir menga yuboring.\n\n"
         "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas. Eski turdagi "
         "vektor stikerlar, .tgs, qabul qilinmaydi \u2014 avval @tgstogifbot orqali "
-        "GIF'ga o'giring.)"
+        "GIF'ga o'giring.)\n\n"
+        "Shundan keyin menga video HAVOLASI yuborsangiz ham, natija shu logo "
+        "bilan qaytadi!"
     )
 
 
 @router.message(F.text == "/setposition")
 async def cmd_setposition(message: Message):
-    """Bot egasi logo videoning qaysi qismida chiqishini tugmalar orqali tanlaydi."""
-    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
-        return
+    """Foydalanuvchi o'z logotipi videoning qaysi qismida chiqishini
+    tugmalar orqali tanlaydi (shaxsiy sozlama)."""
+    current = get_user_logo_position(message.from_user.id)
     buttons = []
     row = []
     for key, (label, _) in LOGO_POSITIONS.items():
-        mark = "\u2705 " if key == LOGO_POSITION else ""
+        mark = "\u2705 " if key == current else ""
         row.append(InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"logopos:{key}"))
         if len(row) == 2:
             buttons.append(row)
@@ -674,22 +706,13 @@ async def cmd_setposition(message: Message):
 
 @router.callback_query(F.data.startswith("logopos:"))
 async def cb_set_position(callback: CallbackQuery):
-    if not OWNER_CHAT_IDS or callback.from_user.id not in OWNER_CHAT_IDS:
-        await callback.answer()
-        return
-    global LOGO_POSITION
     key = callback.data.split(":", 1)[1]
     if key not in LOGO_POSITIONS:
         await callback.answer("Noma'lum joy.")
         return
-    LOGO_POSITION = key
-    try:
-        with open(LOGO_POSITION_PATH, "w") as _f:
-            _f.write(key)
-    except Exception as e:
-        log.warning(f"LOGO_POSITION saqlashda xato: {e}")
+    set_user_logo_position(callback.from_user.id, key)
     label = LOGO_POSITIONS[key][0]
-    await callback.message.edit_text(f"\u2705 Logo joyi o'zgartirildi: {label}")
+    await safe_edit(callback.message, f"\u2705 Logo joyi o'zgartirildi: {label}")
     await callback.answer()
 
 
@@ -697,19 +720,19 @@ async def cb_set_position(callback: CallbackQuery):
 async def handle_logo_upload(message: Message, bot: Bot):
     """/setlogo, /setcookies_ig yoki /setcookies_yt buyrug'idan keyin
     yuborilgan faylni tegishli joyga saqlaydi. GIF/video-stiker/hujjat
-    (logo uchun) va cookies.txt (cookies uchun) qabul qilinadi. Eski
-    turdagi (.tgs, vektor) stikerlar FFmpeg tomonidan o'qib bo'lmagani
-    uchun rad etiladi."""
-    if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
-        return
-
-    # Avval: cookies kutilayotgan bo'lsa, shuni ustuvor ishlov beramiz.
+    (logo uchun — HAR KIM) va cookies.txt (cookies uchun — FAQAT bot
+    egasi) qabul qilinadi. Eski turdagi (.tgs, vektor) stikerlar FFmpeg
+    tomonidan o'qib bo'lmagani uchun rad etiladi."""
+    # Cookies — faqat bot egasi uchun (bu maxfiy, hisobga oid ma'lumot).
     cookies_kind = _awaiting_cookies_from.get(message.from_user.id)
     if cookies_kind and message.document:
+        if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
+            return
         del _awaiting_cookies_from[message.from_user.id]
         await _handle_cookies_upload(message, bot, cookies_kind)
         return
 
+    # Logo — endi HAR KIM o'zi uchun sozlashi mumkin.
     if message.from_user.id not in _awaiting_logo_from:
         return
 
@@ -733,19 +756,21 @@ async def handle_logo_upload(message: Message, bot: Bot):
         ext = ".webm" if (message.document.mime_type or "").endswith("webm") else ".gif"
 
     _awaiting_logo_from.discard(message.from_user.id)
-    new_path = os.path.join(LOGO_DIR, f"logo{ext}")
+    user_dir = os.path.join(USER_LOGOS_DIR, str(message.from_user.id))
+    new_path = os.path.join(user_dir, f"logo{ext}")
     try:
         file_info = await bot.get_file(file_id)
-        os.makedirs(LOGO_DIR, exist_ok=True)
+        os.makedirs(user_dir, exist_ok=True)
         await bot.download_file(file_info.file_path, destination=new_path)
         # Eski (boshqa kengaytmali) logo faylini tozalab qo'yamiz, chalkashmasin.
         for old_ext in (".gif", ".webm"):
-            old_path = os.path.join(LOGO_DIR, f"logo{old_ext}")
+            old_path = os.path.join(user_dir, f"logo{old_ext}")
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
-        global LOGO_GIF_FILE
-        LOGO_GIF_FILE = new_path
-        await message.answer("\u2705 Yangi logo saqlandi! Endi shu video'larga qo'yiladi.")
+        await message.answer(
+            "\u2705 Yangi logo saqlandi! Endi menga video FAYL yoki HAVOLA "
+            "yuborsangiz, shu logo bilan qaytadi."
+        )
     except Exception as e:
         log.error(f"Logo saqlashda xato: {e}")
         await message.answer("\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
@@ -754,12 +779,17 @@ async def handle_logo_upload(message: Message, bot: Bot):
 @router.message(F.video)
 async def handle_owner_video(message: Message, bot: Bot):
     """Har qanday foydalanuvchi video yuborsa, unga GIF logo (watermark)
-    qo'yib qaytaradi. Boshqa buyruqlar (link yuklab olish) kabi majburiy
-    obunani ham talab qiladi."""
+    qo'yib qaytaradi — FAQAT shaxsiy logotipini sozlagan bo'lsa (/setlogo
+    orqali). Boshqa buyruqlar (link yuklab olish) kabi majburiy obunani
+    ham talab qiladi."""
     log.info(f"WMARK: handler boshlandi, user={message.from_user.id}")
-    if not LOGO_GIF_FILE:
-        log.info("WMARK: LOGO_GIF_FILE yo'q, to'xtatildi")
+    logo_file = _find_user_logo(message.from_user.id)
+    if not logo_file:
+        log.info("WMARK: shaxsiy logo yo'q, to'xtatildi (video o'zgarishsiz qoladi)")
+        lang = get_user_lang(message.from_user.id) or "uz"
+        await message.answer(t("no_personal_logo", lang))
         return
+    position = get_user_logo_position(message.from_user.id)
     track_user(message.from_user.id, message.from_user.username)
 
     if not await is_subscribed(bot, message.from_user.id):
@@ -781,7 +811,7 @@ async def handle_owner_video(message: Message, bot: Bot):
         log.info("WMARK: video yuklab olindi, ffmpeg boshlanmoqda")
 
         await asyncio.wait_for(
-            asyncio.to_thread(_add_watermark_sync, input_path, output_path),
+            asyncio.to_thread(_add_watermark_sync, input_path, output_path, logo_file, position),
             timeout=180,
         )
         log.info("WMARK: ffmpeg tugadi, video yuborilmoqda")
@@ -922,6 +952,21 @@ async def handle_link(message: Message, bot: Bot):
 
         # Kodek Telegram bilan mosligini tekshirib, kerak bo'lsagina tuzatamiz.
         downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
+
+        # Agar foydalanuvchi o'zining shaxsiy logotipini sozlagan bo'lsa,
+        # havola orqali yuklangan videoga ham shuni qo'yamiz.
+        user_logo = _find_user_logo(message.from_user.id)
+        if user_logo:
+            wm_output = downloaded_path.rsplit(".", 1)[0] + "_wm.mp4"
+            try:
+                position = get_user_logo_position(message.from_user.id)
+                await asyncio.to_thread(
+                    _add_watermark_sync, downloaded_path, wm_output, user_logo, position
+                )
+                os.remove(downloaded_path)
+                downloaded_path = wm_output
+            except Exception as e:
+                log.warning(f"Havola-yuklashda shaxsiy logo qo'yishda xato (logosiz yuboriladi): {e}")
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
