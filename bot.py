@@ -602,11 +602,14 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         "-i", input_path,
         "-stream_loop", "-1", "-i", logo_file,
         "-filter_complex",
-        # Logo videoning ENI'ga NISBATAN (38%) o'lchamlanadi — shunda har
-        # qanday video o'lchamida ham logo sezilarli va mutanosib chiqadi.
-        "[1:v][0:v]scale2ref=w=main_w*0.38:h=ow/mdar[logo][video];"
+        # Logo videoning ENI'ga NISBATAN (48%) o'lchamlanadi — shunda har
+        # qanday video o'lchamida ham logo aniq ko'zga tashlanadi.
+        "[1:v][0:v]scale2ref=w=main_w*0.48:h=ow/mdar[logo][video];"
         "[logo]format=rgba[logo2];"
         f"[video][logo2]overlay={xy}:shortest=1",
+        # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
+        # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
         "-c:a", "copy",
         output_path,
     ]
