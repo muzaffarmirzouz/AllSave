@@ -157,13 +157,31 @@ if not LOGO_GIF_FILE:
             logging.getLogger("video-bot").warning(f"LOGO_GIF_B64'ni o'qishda xato: {_e}")
 
 LOGO_POSITIONS = {
-    "top_left": ("Chap yuqori", "20:20"),
-    "top_center": ("Yuqori markaz", "(main_w-overlay_w)/2:20"),
-    "top_right": ("O'ng yuqori", "main_w-overlay_w-20:20"),
-    "center": ("Markaz", "(main_w-overlay_w)/2:(main_h-overlay_h)/2"),
-    "bottom_left": ("Chap pastki", "20:main_h-overlay_h-20"),
-    "bottom_center": ("Pastki markaz", "(main_w-overlay_w)/2:main_h-overlay_h-20"),
-    "bottom_right": ("O'ng pastki", "main_w-overlay_w-20:main_h-overlay_h-20"),
+    "top_left": "20:20",
+    "top_center": "(main_w-overlay_w)/2:20",
+    "top_right": "main_w-overlay_w-20:20",
+    "center": "(main_w-overlay_w)/2:(main_h-overlay_h)/2",
+    "bottom_left": "20:main_h-overlay_h-20",
+    "bottom_center": "(main_w-overlay_w)/2:main_h-overlay_h-20",
+    "bottom_right": "main_w-overlay_w-20:main_h-overlay_h-20",
+}
+
+POSITION_LABELS = {
+    "uz": {
+        "top_left": "Chap yuqori", "top_center": "Yuqori markaz", "top_right": "O'ng yuqori",
+        "center": "Markaz", "bottom_left": "Chap pastki", "bottom_center": "Pastki markaz",
+        "bottom_right": "O'ng pastki",
+    },
+    "ru": {
+        "top_left": "Верхний левый", "top_center": "Верхний центр", "top_right": "Верхний правый",
+        "center": "Центр", "bottom_left": "Нижний левый", "bottom_center": "Нижний центр",
+        "bottom_right": "Нижний правый",
+    },
+    "en": {
+        "top_left": "Top left", "top_center": "Top center", "top_right": "Top right",
+        "center": "Center", "bottom_left": "Bottom left", "bottom_center": "Bottom center",
+        "bottom_right": "Bottom right",
+    },
 }
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -316,6 +334,27 @@ TEXTS = {
             "\U0001F4A1 Sizda hali shaxsiy logo sozlanmagan. "
             "/setlogo orqali o'rnatib, keyin qayta urinib ko'ring."
         ),
+        "setlogo_prompt": (
+            "\U0001F3A8 Yangi (shaxsiy) logo sifatida ishlatiladigan GIF yoki "
+            "istalgan turdagi Telegram stikerini (video-stiker yoki animatsion "
+            "stiker) hozir menga yuboring.\n\n"
+            "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)\n\n"
+            "Shundan keyin menga video HAVOLASI yuborsangiz ham, natija shu logo "
+            "bilan qaytadi!"
+        ),
+        "setposition_prompt": "\U0001F4CD Logo videoning qaysi qismida chiqsin?",
+        "position_changed": "\u2705 Logo joyi o'zgartirildi: {label}",
+        "unknown_position": "Noma'lum joy.",
+        "tgs_convert_failed": (
+            "\u274C Bu stikerni o'girib bo'lmadi. Iltimos, boshqa stiker "
+            "sinab ko'ring, yoki https://ezgif.com/tgs-to-gif saytida "
+            "GIF'ga o'girib, o'sha GIF'ni yuboring."
+        ),
+        "logo_saved": (
+            "\u2705 Yangi logo saqlandi! Endi menga video FAYL yoki HAVOLA "
+            "yuborsangiz, shu logo bilan qaytadi."
+        ),
+        "logo_save_error": "\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
     },
     "ru": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -367,6 +406,27 @@ TEXTS = {
             "\U0001F4A1 У вас ещё не настроен личный логотип. "
             "Настройте через /setlogo и попробуйте снова."
         ),
+        "setlogo_prompt": (
+            "\U0001F3A8 Отправьте мне GIF или любой стикер Telegram "
+            "(видео-стикер или анимированный стикер), который будет "
+            "использоваться как ваш личный логотип.\n\n"
+            "(Просто отправьте — отдельная команда не нужна.)\n\n"
+            "После этого, если вы отправите мне ССЫЛКУ на видео, результат "
+            "тоже вернётся с этим логотипом!"
+        ),
+        "setposition_prompt": "\U0001F4CD В какой части видео должен появляться логотип?",
+        "position_changed": "\u2705 Позиция логотипа изменена: {label}",
+        "unknown_position": "Неизвестная позиция.",
+        "tgs_convert_failed": (
+            "\u274C Не удалось конвертировать этот стикер. Попробуйте другой "
+            "стикер, или конвертируйте его в GIF на https://ezgif.com/tgs-to-gif "
+            "и отправьте этот GIF."
+        ),
+        "logo_saved": (
+            "\u2705 Новый логотип сохранён! Теперь если отправите мне видео "
+            "ФАЙЛОМ или ССЫЛКОЙ, результат вернётся с этим логотипом."
+        ),
+        "logo_save_error": "\u274C Ошибка при сохранении логотипа, попробуйте ещё раз.",
     },
     "en": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -418,6 +478,26 @@ TEXTS = {
             "\U0001F4A1 You haven't set up a personal logo yet. "
             "Set one up with /setlogo and try again."
         ),
+        "setlogo_prompt": (
+            "\U0001F3A8 Send me a GIF or any Telegram sticker (video sticker "
+            "or animated sticker) to use as your personal logo.\n\n"
+            "(Just send it \u2014 no separate command needed.)\n\n"
+            "After that, if you send me a video LINK too, the result will "
+            "come back with this logo!"
+        ),
+        "setposition_prompt": "\U0001F4CD Where on the video should the logo appear?",
+        "position_changed": "\u2705 Logo position changed: {label}",
+        "unknown_position": "Unknown position.",
+        "tgs_convert_failed": (
+            "\u274C Couldn't convert this sticker. Try a different sticker, "
+            "or convert it to GIF at https://ezgif.com/tgs-to-gif and send "
+            "that GIF instead."
+        ),
+        "logo_saved": (
+            "\u2705 New logo saved! Now if you send me a video FILE or LINK, "
+            "the result will come back with this logo."
+        ),
+        "logo_save_error": "\u274C Error saving the logo, please try again.",
     },
 }
 
@@ -596,15 +676,15 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     tushiriladi."""
     import subprocess
 
-    _, xy = LOGO_POSITIONS.get(position, LOGO_POSITIONS["bottom_center"])
+    xy = LOGO_POSITIONS.get(position, LOGO_POSITIONS["bottom_center"])
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
         "-stream_loop", "-1", "-i", logo_file,
         "-filter_complex",
-        # Logo videoning ENI'ga NISBATAN (60%) o'lchamlanadi — shunda har
-        # qanday video o'lchamida ham logo yaqqol ko'zga tashlanadi.
-        "[1:v][0:v]scale2ref=w=main_w*0.60:h=ow/mdar[logo][video];"
+        # Logo videoning ENI'ga NISBATAN (75%) o'lchamlanadi — juda yaqqol
+        # ko'rinadigan, katta logo hosil qiladi.
+        "[1:v][0:v]scale2ref=w=main_w*0.75:h=ow/mdar[logo][video];"
         "[logo]format=rgba[logo2];"
         f"[video][logo2]overlay={xy}:shortest=1",
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
@@ -677,47 +757,44 @@ async def cmd_setlogo(message: Message):
     """Foydalanuvchi o'zining shaxsiy logo (watermark) GIF'ini o'rnatishni
     boshlaydi. Endi bu HAR KIM uchun ochiq — har kim o'z logosini sozlashi
     mumkin."""
+    lang = get_user_lang(message.from_user.id) or "uz"
     _awaiting_logo_from.add(message.from_user.id)
-    await message.answer(
-        "\U0001F3A8 Yangi (shaxsiy) logo sifatida ishlatiladigan GIF yoki "
-        "istalgan turdagi Telegram stikerini (video-stiker yoki animatsion "
-        "stiker) hozir menga yuboring.\n\n"
-        "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)\n\n"
-        "Shundan keyin menga video HAVOLASI yuborsangiz ham, natija shu logo "
-        "bilan qaytadi!"
-    )
+    await message.answer(t("setlogo_prompt", lang))
 
 
 @router.message(F.text == "/setposition")
 async def cmd_setposition(message: Message):
     """Foydalanuvchi o'z logotipi videoning qaysi qismida chiqishini
     tugmalar orqali tanlaydi (shaxsiy sozlama)."""
+    lang = get_user_lang(message.from_user.id) or "uz"
+    labels = POSITION_LABELS.get(lang, POSITION_LABELS["uz"])
     current = get_user_logo_position(message.from_user.id)
     buttons = []
     row = []
-    for key, (label, _) in LOGO_POSITIONS.items():
+    for key in LOGO_POSITIONS:
         mark = "\u2705 " if key == current else ""
-        row.append(InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"logopos:{key}"))
+        row.append(InlineKeyboardButton(text=f"{mark}{labels[key]}", callback_data=f"logopos:{key}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
     await message.answer(
-        "\U0001F4CD Logo videoning qaysi qismida chiqsin?",
+        t("setposition_prompt", lang),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
 
 
 @router.callback_query(F.data.startswith("logopos:"))
 async def cb_set_position(callback: CallbackQuery):
+    lang = get_user_lang(callback.from_user.id) or "uz"
     key = callback.data.split(":", 1)[1]
     if key not in LOGO_POSITIONS:
-        await callback.answer("Noma'lum joy.")
+        await callback.answer(t("unknown_position", lang))
         return
     set_user_logo_position(callback.from_user.id, key)
-    label = LOGO_POSITIONS[key][0]
-    await safe_edit(callback.message, f"\u2705 Logo joyi o'zgartirildi: {label}")
+    label = POSITION_LABELS.get(lang, POSITION_LABELS["uz"])[key]
+    await safe_edit(callback.message, t("position_changed", lang).format(label=label))
     await callback.answer()
 
 
@@ -755,6 +832,7 @@ async def handle_logo_upload(message: Message, bot: Bot):
     # Logo — endi HAR KIM o'zi uchun sozlashi mumkin.
     if message.from_user.id not in _awaiting_logo_from:
         return
+    lang = get_user_lang(message.from_user.id) or "uz"
 
     # Stiker bo'lsa: "video-stiker" (.webm) to'g'ridan-to'g'ri, eski turdagi
     # (".tgs", vektor/Lottie) esa rlottie orqali GIF'ga o'girilib olinadi.
@@ -787,11 +865,7 @@ async def handle_logo_upload(message: Message, bot: Bot):
             ok = await asyncio.to_thread(_convert_tgs_to_gif_sync, tgs_temp, new_path)
             os.remove(tgs_temp)
             if not ok:
-                await message.answer(
-                    "\u274C Bu stikerni o'girib bo'lmadi. Iltimos, boshqa stiker "
-                    "sinab ko'ring, yoki https://ezgif.com/tgs-to-gif saytida "
-                    "GIF'ga o'girib, o'sha GIF'ni yuboring."
-                )
+                await message.answer(t("tgs_convert_failed", lang))
                 return
         else:
             await bot.download_file(file_info.file_path, destination=new_path)
@@ -800,13 +874,10 @@ async def handle_logo_upload(message: Message, bot: Bot):
             old_path = os.path.join(user_dir, f"logo{old_ext}")
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
-        await message.answer(
-            "\u2705 Yangi logo saqlandi! Endi menga video FAYL yoki HAVOLA "
-            "yuborsangiz, shu logo bilan qaytadi."
-        )
+        await message.answer(t("logo_saved", lang))
     except Exception as e:
         log.error(f"Logo saqlashda xato: {e}")
-        await message.answer("\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.")
+        await message.answer(t("logo_save_error", lang))
 
 
 @router.message(F.video)
