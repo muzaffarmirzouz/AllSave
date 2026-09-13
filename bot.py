@@ -18,13 +18,14 @@ import asyncio
 import base64
 import logging
 import os
+import shutil
 import sqlite3
 import tempfile
 import uuid
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 import yt_dlp
@@ -626,6 +627,33 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
         await callback.answer(t("not_subscribed_yet", lang), show_alert=True)
 
 
+def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
+    """gallery-dl orqali Instagram rasm(lar)ini (yt-dlp yuklay olmaydigan
+    surat post/karusel) yuklab oladi. yt-dlp — video, gallery-dl — rasm
+    uchun mos vositalar. Yuklangan rasm fayllari yo'llarini (tartiblangan)
+    ro'yxat qilib qaytaradi. Bloklaydigan (sinxron) funksiya — alohida
+    threadda ishga tushiriladi."""
+    import subprocess
+
+    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime"]
+    if IG_COOKIES_FILE:
+        cmd += ["--cookies", IG_COOKIES_FILE]
+    cmd.append(url)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"gallery-dl xato: {result.stderr[-500:]}")
+
+    image_exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+    files = []
+    for root, _dirs, filenames in os.walk(output_dir):
+        for fn in filenames:
+            if fn.lower().endswith(image_exts):
+                files.append(os.path.join(root, fn))
+    files.sort()
+    return files
+
+
 def _download_video_sync(url: str, ydl_opts: dict) -> dict:
     """Bloklaydigan (sinxron) yuklab olish — alohida threadda ishga tushiriladi,
     shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi.
@@ -1148,6 +1176,36 @@ async def handle_link(message: Message, bot: Bot):
     except yt_dlp.utils.DownloadError as e:
         log.warning(f"Download xato: {e}")
         err_text = str(e).lower()
+
+        # Instagram RASM post/karusel bo'lsa, yt-dlp "no video formats"
+        # xatosini beradi (u faqat video uchun mo'ljallangan). Bunday holda
+        # gallery-dl orqali (rasm uchun mos vosita) qayta urinamiz.
+        if "instagram.com" in url and "no video formats" in err_text:
+            try:
+                img_dir = tempfile.mkdtemp()
+                image_paths = await asyncio.to_thread(
+                    _download_images_gallery_dl_sync, url, img_dir
+                )
+                if image_paths:
+                    await safe_edit(status, t("uploading", lang))
+                    if len(image_paths) == 1:
+                        await bot.send_photo(
+                            chat_id=message.chat.id, photo=FSInputFile(image_paths[0])
+                        )
+                    else:
+                        media = [InputMediaPhoto(media=FSInputFile(p)) for p in image_paths[:10]]
+                        await bot.send_media_group(chat_id=message.chat.id, media=media)
+                    await status.delete()
+                    for p in image_paths:
+                        os.remove(p)
+                    shutil.rmtree(img_dir, ignore_errors=True)
+                    return
+                shutil.rmtree(img_dir, ignore_errors=True)
+            except Exception as ge:
+                log.warning(f"gallery-dl zaxira usuli ham ishlamadi: {ge}")
+            await safe_edit(status, t("generic_error", lang))
+            return
+
         if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
             await safe_edit(status, t("login_required", lang))
         else:
