@@ -704,6 +704,11 @@ def _build_caption(result: dict) -> str:
     return (body + footer)[:1024]
 
 
+IMAGE_CAPTION = (
+    f"Ushbu rasm eng sifatli tarzda {BOT_USERNAME_TAG} orqali yuklab olindi \U0001F4F8"
+)
+
+
 def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
     """FFmpeg orqali videoga berilgan logo faylni, berilgan pozitsiyada
     qo'yadi. GIF/WEBM butun video davomiyligiga yetguncha aylantiriladi
@@ -1132,7 +1137,7 @@ async def handle_link(message: Message, bot: Bot):
             await bot.send_photo(
                 chat_id=message.chat.id,
                 photo=FSInputFile(downloaded_path),
-                caption=_build_caption(result),
+                caption=IMAGE_CAPTION,
             )
             await status.delete()
             return
@@ -1190,10 +1195,12 @@ async def handle_link(message: Message, bot: Bot):
                     await safe_edit(status, t("uploading", lang))
                     if len(image_paths) == 1:
                         await bot.send_photo(
-                            chat_id=message.chat.id, photo=FSInputFile(image_paths[0])
+                            chat_id=message.chat.id, photo=FSInputFile(image_paths[0]),
+                            caption=IMAGE_CAPTION,
                         )
                     else:
                         media = [InputMediaPhoto(media=FSInputFile(p)) for p in image_paths[:10]]
+                        media[0].caption = IMAGE_CAPTION
                         await bot.send_media_group(chat_id=message.chat.id, media=media)
                     await status.delete()
                     for p in image_paths:
