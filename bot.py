@@ -1189,10 +1189,11 @@ async def handle_link(message: Message, bot: Bot):
         log.warning(f"Download xato: {e}")
         err_text = str(e).lower()
 
-        # Instagram RASM post/karusel bo'lsa, yt-dlp "no video formats"
-        # xatosini beradi (u faqat video uchun mo'ljallangan). Bunday holda
-        # gallery-dl orqali (rasm uchun mos vosita) qayta urinamiz.
-        if "instagram.com" in url and "no video formats" in err_text:
+        # RASM post/karusel bo'lsa (Instagram, Twitter/X va h.k.), yt-dlp
+        # "no video" turidagi xato beradi (u faqat video uchun mo'ljallangan).
+        # Bunday holda gallery-dl orqali (rasm uchun mos vosita) qayta urinamiz.
+        no_video_patterns = ("no video formats", "no video could be found")
+        if any(p in err_text for p in no_video_patterns):
             try:
                 img_dir = tempfile.mkdtemp()
                 image_paths = await asyncio.to_thread(
