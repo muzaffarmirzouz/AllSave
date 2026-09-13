@@ -1091,6 +1091,24 @@ async def handle_link(message: Message, bot: Bot):
             await safe_edit(status, t("not_found", lang))
             return
 
+        # Agar yuklangan fayl VIDEO emas, RASM bo'lsa (masalan Instagram'dagi
+        # oddiy surat post/story) — watermark/kodek ishlovisiz, to'g'ridan-to'g'ri
+        # rasm sifatida yuboramiz.
+        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".heic")
+        if downloaded_path.lower().endswith(image_exts):
+            size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
+            if size_mb > MAX_TELEGRAM_MB:
+                await safe_edit(status, t("too_large", lang).format(size=size_mb, max=MAX_TELEGRAM_MB))
+                return
+            await safe_edit(status, t("uploading", lang))
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=FSInputFile(downloaded_path),
+                caption=_build_caption(result),
+            )
+            await status.delete()
+            return
+
         # Agar foydalanuvchi o'zining shaxsiy logotipini sozlagan bo'lsa,
         # havola orqali yuklangan videoga ham shuni qo'yamiz (bu qadam
         # allaqachon H.264+AAC'ga qayta kodlaydi, shuning uchun keyingi
