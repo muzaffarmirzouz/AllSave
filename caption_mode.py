@@ -267,7 +267,8 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         return
 
     srt_path = tmp / "subs.ass"
-    write_ass(words, srt_path)
+    video_width, video_height = await get_video_dimensions(src_path)
+    write_ass(words, srt_path, video_width, video_height)
 
     await status.edit_text("🎞 Titr videoga yozilmoqda...")
     out_path = tmp / "output.mp4"
@@ -301,6 +302,28 @@ async def get_duration(path: Path) -> Optional[float]:
         return None
 
 
+async def get_video_dimensions(path: Path) -> tuple:
+    """Videoning kenglik/balandligini (piksellarda) aniqlaydi. Bu subtitr
+    o'lchamini videoning HAQIQIY o'lchamiga moslashtirish uchun kerak —
+    aks holda ASS faylidagi etalon o'lcham (masalan 384x288) bilan haqiqiy
+    video o'lchami (masalan 1080x1920) mos kelmay, matn nisbatan juda katta
+    yoki kichik bo'lib chiqadi."""
+    cmd = [
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0", str(path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    out, _ = await proc.communicate()
+    try:
+        w_str, h_str = out.decode().strip().split("x")
+        return int(w_str), int(h_str)
+    except (ValueError, AttributeError):
+        return 1080, 1920  # aniqlab bo'lmasa, vertikal video uchun oqilona standart
+
+
 async def run_ffmpeg(cmd: list):
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -310,7 +333,7 @@ async def run_ffmpeg(cmd: list):
         raise RuntimeError(stderr.decode(errors="ignore"))
 
 
-def group_words_into_lines(words, max_words: int = 5, max_chars: int = 42, max_duration: float = 4.0):
+def group_words_into_lines(words, max_words: int = 4, max_chars: int = 28, max_duration: float = 3.0):
     """transformers ASR pipeline'ning so'z darajasidagi natijasidan
     qisqa subtitr qatorlarini yasaydi."""
     lines = []
@@ -361,35 +384,47 @@ def format_ass_timestamp(seconds: float) -> str:
 def write_ass(
     words,
     path: Path,
-    font_name: str = "DejaVu Sans",
-    font_size: int = 20,
+    video_width: int,
+    video_height: int,
+    font_name: str = "Noto Sans",
     fade_in_ms: int = 250,
     fade_out_ms: int = 150,
 ):
     """SRT o'rniga to'liq ASS fayl yasaydi — bu orqa fonsiz (faqat nozik
     qora outline bilan) va har qator sekin paydo bo'ladigan (fade-in)
     subtitrlarga imkon beradi (bular SRT formatida ishlamaydi).
-    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak — "DejaVu
-    Sans" ko'pchilik Linux tizimlarida standart o'rnatilgan bo'ladi.
-    Boshqa shrift kerak bo'lsa, uni ffmpeg image'ga apt orqali o'rnatib
-    (masalan "fonts-dejavu", "fonts-noto"), shu yerdagi font_name'ni
-    o'sha shrift nomiga almashtiring."""
+
+    video_width/video_height — ASS faylining "etalon o'lchami"
+    (PlayResX/PlayResY) videoning HAQIQIY o'lchamiga tenglashtiriladi,
+    aks holda libass matnni noto'g'ri nisbatda (juda katta/kichik)
+    chizib yuboradi. Shrift o'lchami videoning balandligiga nisbatan
+    (~4.2%) hisoblanadi, shunda istalgan o'lchamdagi videoda mutanosib
+    chiqadi.
+
+    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Noto Sans"
+    uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-noto" ni
+    qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
+    font_size = max(18, int(video_height * 0.042))
+    margin_v = int(video_height * 0.06)
+
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
-        "PlayResX: 384\n"
-        "PlayResY: 288\n"
+        f"PlayResX: {video_width}\n"
+        f"PlayResY: {video_height}\n"
         "ScaledBorderAndShadow: yes\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # BorderStyle=1 -> faqat outline+shadow, orqa fon (quti) YO'Q.
-        # Outline=2 -> matn har xil fonda ham o'qilishi uchun yetarli qalin
-        # qora chegara. Shadow=0 -> qo'shimcha soya yo'q (toza ko'rinish).
+        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=1 -> orqa
+        # fon (quti) YO'Q, faqat outline+shadow. Outline qalinligi ham
+        # video o'lchamiga nisbatan hisoblanadi (juda ingichka/qalin
+        # bo'lib qolmasligi uchun).
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
-        "&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1\n\n"
+        f"&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{max(2, font_size // 12)},0,"
+        f"2,20,20,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
