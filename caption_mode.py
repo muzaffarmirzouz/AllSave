@@ -259,8 +259,8 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         await status.edit_text("❌ Videoda nutq topilmadi.")
         return
 
-    srt_path = tmp / "subs.srt"
-    write_srt(words, srt_path)
+    srt_path = tmp / "subs.ass"
+    write_ass(words, srt_path)
 
     await status.edit_text("🎞 Titr videoga yozilmoqda...")
     out_path = tmp / "output.mp4"
@@ -298,14 +298,6 @@ async def run_ffmpeg(cmd: list):
     _, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(stderr.decode(errors="ignore"))
-
-
-def format_timestamp(seconds: float) -> str:
-    ms_total = int(round(seconds * 1000))
-    h, ms_total = divmod(ms_total, 3600_000)
-    m, ms_total = divmod(ms_total, 60_000)
-    s, ms = divmod(ms_total, 1000)
-    return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
 
 def group_words_into_lines(words, max_words: int = 5, max_chars: int = 42, max_duration: float = 4.0):
@@ -348,26 +340,69 @@ def group_words_into_lines(words, max_words: int = 5, max_chars: int = 42, max_d
     return lines
 
 
-def write_srt(words, path: Path):
-    lines = []
+def format_ass_timestamp(seconds: float) -> str:
+    cs_total = int(round(seconds * 100))
+    h, cs_total = divmod(cs_total, 360000)
+    m, cs_total = divmod(cs_total, 6000)
+    s, cs = divmod(cs_total, 100)
+    return f"{h:01}:{m:02}:{s:02}.{cs:02}"
+
+
+def write_ass(
+    words,
+    path: Path,
+    font_name: str = "DejaVu Sans",
+    font_size: int = 20,
+    fade_in_ms: int = 250,
+    fade_out_ms: int = 150,
+):
+    """SRT o'rniga to'liq ASS fayl yasaydi — bu orqa fonsiz (faqat nozik
+    qora outline bilan) va har qator sekin paydo bo'ladigan (fade-in)
+    subtitrlarga imkon beradi (bular SRT formatida ishlamaydi).
+    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak — "DejaVu
+    Sans" ko'pchilik Linux tizimlarida standart o'rnatilgan bo'ladi.
+    Boshqa shrift kerak bo'lsa, uni ffmpeg image'ga apt orqali o'rnatib
+    (masalan "fonts-dejavu", "fonts-noto"), shu yerdagi font_name'ni
+    o'sha shrift nomiga almashtiring."""
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "PlayResX: 384\n"
+        "PlayResY: 288\n"
+        "ScaledBorderAndShadow: yes\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        # BorderStyle=1 -> faqat outline+shadow, orqa fon (quti) YO'Q.
+        # Outline=2 -> matn har xil fonda ham o'qilishi uchun yetarli qalin
+        # qora chegara. Shadow=0 -> qo'shimcha soya yo'q (toza ko'rinish).
+        f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
+        "&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
     entries = group_words_into_lines(words)
-    for i, (start, end, text) in enumerate(entries, start=1):
+    lines = [header]
+    for start, end, text in entries:
         if not text:
             continue
-        lines.append(str(i))
-        lines.append(f"{format_timestamp(start)} --> {format_timestamp(end)}")
-        lines.append(text)
-        lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
+        start_ts = format_ass_timestamp(start)
+        end_ts = format_ass_timestamp(end)
+        # {\fad(in_ms,out_ms)} -> qator sekin paydo bo'lib, sekin yo'qoladi.
+        lines.append(
+            f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,"
+            f"{{\\fad({fade_in_ms},{fade_out_ms})}}{text}\n"
+        )
+    path.write_text("".join(lines), encoding="utf-8")
 
 
-async def burn_subtitles(src: Path, srt: Path, out: Path):
-    """libass 'subtitles' filtri bilan SRT'ni videoga hardsub qiladi."""
-    srt_escaped = str(srt).replace("\\", "/").replace(":", "\\:")
-    style = (
-        "FontName=Arial,FontSize=16,PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=30"
-    )
-    vf = f"subtitles='{srt_escaped}':force_style='{style}'"
+async def burn_subtitles(src: Path, ass: Path, out: Path):
+    """libass 'ass' filtri bilan ASS subtitr faylini videoga hardsub qiladi
+    (stil, fade-in/out va shrift ASS faylning o'zida belgilangan)."""
+    ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
+    vf = f"ass='{ass_escaped}'"
     cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:a", "copy", str(out)]
     await run_ffmpeg(cmd)
