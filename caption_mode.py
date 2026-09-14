@@ -498,7 +498,15 @@ def write_ass(
     ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Noto Sans"
     uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-noto" ni
     qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
-    font_size = max(16, int(video_height * 0.032))
+    # ESLATMA: gorizontal (16:9 kabi, kenglik balandlikdan katta) videolar
+    # ekranda ko'rsatilganda balandligi kichikroq bo'lib chiqadi (masalan
+    # Telegram uni kenglik bo'yicha moslashtiradi), shuning uchun bir xil
+    # nisbat bilan hisoblangan shrift vertikal (9:16) videoga nisbatan
+    # KICHIKROQ ko'rinadi. Shuni qoplash uchun gorizontal formatda kattaroq
+    # nisbat ishlatiladi — vertikal formatga tegilmaydi.
+    is_landscape = video_width > video_height
+    font_ratio = 0.062 if is_landscape else 0.032
+    font_size = max(16, int(video_height * font_ratio))
     margin_v = int(video_height * 0.34)
 
     header = (
