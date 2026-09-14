@@ -102,9 +102,11 @@ async def cmd_caption(message: Message, state: FSMContext):
     await state.set_state(CaptionStates.waiting_input)
     await message.answer(
         "🎬 <b>Titr qo'shish rejimi yoqildi.</b>\n\n"
-        "Menga video fayl yuboring YOKI video havolasini (Instagram, TikTok va h.k.) tashlang.\n"
-        "Agar video o'zbek tilida bo'lsa — unga avtomatik titr yozib qaytaraman.\n\n"
-        "Bekor qilish uchun /cancel bosing.",
+        "Menga video fayl yoki video havolasini (Instagram, TikTok va h.k.) yuboring — "
+        "o'zbek tilida bo'lsa, unga avtomatik titr yozib qaytaraman.\n\n"
+        "Istagancha video/link yuborishingiz mumkin — har birida titr qo'shib "
+        "boraman. Oddiy rejimga qaytish uchun /start, faqat shu rejimdan chiqish "
+        "uchun /cancel bosing.",
         parse_mode="HTML",
     )
 
@@ -139,7 +141,10 @@ async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
         await bot.download_file(tg_file.file_path, destination=src_path)
         await process_and_reply(message, status, src_path, tmp)
 
-    await state.clear()
+    # ESLATMA: bu yerda ATAYLAB state.clear() chaqirilmaydi — rejim
+    # davom etadi, shunda foydalanuvchi ketma-ket bir nechta video
+    # yuborsa ham har birida titr qo'shiladi. Rejimdan chiqish uchun
+    # /start (oddiy rejimga qaytaradi) yoki /cancel kerak.
 
 
 # ---------------------------------------------------------------- link kelsa
@@ -158,11 +163,13 @@ async def handle_link_input(message: Message, state: FSMContext):
                 "❌ Videoni yuklab bo'lmadi. Havola to'g'riligini va postning "
                 "ochiq (public) ekanligini tekshiring."
             )
-            await state.clear()
             return
         await process_and_reply(message, status, src_path, tmp)
 
-    await state.clear()
+    # ESLATMA: state.clear() ATAYLAB chaqirilmaydi — rejim davom etadi
+    # (muvaffaqiyatli bo'lsa ham, xato bo'lsa ham), shunda foydalanuvchi
+    # qayta urinib ko'rishi yoki boshqa video/link yuborishi mumkin.
+    # Rejimdan chiqish uchun /start yoki /cancel kerak.
 
 
 @caption_router.message(CaptionStates.waiting_input, F.text, ~F.text.startswith("/"))
@@ -272,7 +279,10 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         return
 
     await status.edit_text("📤 Yuborilmoqda...")
-    await message.answer_video(FSInputFile(out_path), caption="✅ Tayyor!")
+    await message.answer_video(
+        FSInputFile(out_path),
+        caption="✅ Tayyor! Yana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting."
+    )
     await status.delete()
 
 
