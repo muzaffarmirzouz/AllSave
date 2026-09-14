@@ -165,7 +165,7 @@ async def handle_link_input(message: Message, state: FSMContext):
     await state.clear()
 
 
-@caption_router.message(CaptionStates.waiting_input, F.text)
+@caption_router.message(CaptionStates.waiting_input, F.text, ~F.text.startswith("/"))
 async def handle_unrecognized_input(message: Message):
     await message.answer(
         "Menga video fayl yoki video havolasini yuboring, yoki bekor qilish "
