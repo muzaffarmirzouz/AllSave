@@ -95,20 +95,110 @@ class CaptionStates(StatesGroup):
     waiting_input = State()
 
 
+# --------------------------------------------------------------- ko'p tillilik
+
+CAPTION_TEXTS = {
+    "uz": {
+        "mode_on": (
+            "🎬 <b>Titr qo'shish rejimi yoqildi.</b>\n\n"
+            "Menga video fayl yoki video havolasini (Instagram, TikTok va h.k.) yuboring — "
+            "o'zbek tilida bo'lsa, unga avtomatik titr yozib qaytaraman.\n\n"
+            "Istagancha video/link yuborishingiz mumkin — har birida titr qo'shib "
+            "boraman. Oddiy rejimga qaytish uchun /start, faqat shu rejimdan chiqish "
+            "uchun /cancel bosing."
+        ),
+        "cancelled": "Bekor qilindi.",
+        "too_large": "Video juda katta ({max}MB dan oshmasin).",
+        "downloading": "⏳ Video yuklab olinmoqda...",
+        "download_failed": (
+            "❌ Videoni yuklab bo'lmadi. Havola to'g'riligini va postning "
+            "ochiq (public) ekanligini tekshiring."
+        ),
+        "unrecognized": "Menga video fayl yoki video havolasini yuboring, yoki bekor qilish uchun /cancel bosing.",
+        "too_long": "❌ Video juda uzun ({sec}s). {max}s dan qisqa video yuboring.",
+        "cant_read": "❌ Videoni o'qib bo'lmadi. Fayl formatini tekshiring.",
+        "transcribing": "🧠 Nutq tanilmoqda...",
+        "no_speech": "❌ Videoda nutq topilmadi.",
+        "burning": "🎞 Titr videoga yozilmoqda...",
+        "burn_failed": "❌ Titr yozishda xatolik yuz berdi.",
+        "uploading": "📤 Yuborilmoqda...",
+        "done_caption": "✅ Tayyor! Yana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting.",
+    },
+    "ru": {
+        "mode_on": (
+            "🎬 <b>Режим добавления субтитров включён.</b>\n\n"
+            "Отправьте мне видеофайл или ссылку на видео (Instagram, TikTok и т.д.) — "
+            "если видео на узбекском языке, автоматически добавлю субтитры.\n\n"
+            "Можете отправлять сколько угодно видео/ссылок — буду добавлять субтитры "
+            "к каждому. Чтобы вернуться в обычный режим — /start, чтобы выйти только "
+            "из этого режима — /cancel."
+        ),
+        "cancelled": "Отменено.",
+        "too_large": "Видео слишком большое (не более {max}МБ).",
+        "downloading": "⏳ Скачиваю видео...",
+        "download_failed": (
+            "❌ Не удалось скачать видео. Проверьте ссылку и убедитесь, что пост "
+            "открытый (public)."
+        ),
+        "unrecognized": "Отправьте мне видеофайл или ссылку на видео, либо нажмите /cancel для отмены.",
+        "too_long": "❌ Видео слишком длинное ({sec}с). Отправьте видео короче {max}с.",
+        "cant_read": "❌ Не удалось прочитать видео. Проверьте формат файла.",
+        "transcribing": "🧠 Распознаю речь...",
+        "no_speech": "❌ Речь в видео не найдена.",
+        "burning": "🎞 Добавляю субтитры на видео...",
+        "burn_failed": "❌ Произошла ошибка при добавлении субтитров.",
+        "uploading": "📤 Отправляю...",
+        "done_caption": "✅ Готово! Можете отправить ещё видео/ссылку, или вернуться в обычный режим через /start.",
+    },
+    "en": {
+        "mode_on": (
+            "🎬 <b>Subtitle mode enabled.</b>\n\n"
+            "Send me a video file or a video link (Instagram, TikTok, etc.) — "
+            "if the video is in Uzbek, I'll add subtitles automatically.\n\n"
+            "You can send as many videos/links as you like — I'll add subtitles to "
+            "each one. To return to normal mode, use /start; to exit just this mode, "
+            "use /cancel."
+        ),
+        "cancelled": "Cancelled.",
+        "too_large": "The video is too large (must be under {max}MB).",
+        "downloading": "⏳ Downloading video...",
+        "download_failed": "❌ Couldn't download the video. Check the link and make sure the post is public.",
+        "unrecognized": "Send me a video file or a video link, or press /cancel to cancel.",
+        "too_long": "❌ The video is too long ({sec}s). Please send a video under {max}s.",
+        "cant_read": "❌ Couldn't read the video. Check the file format.",
+        "transcribing": "🧠 Transcribing speech...",
+        "no_speech": "❌ No speech found in the video.",
+        "burning": "🎞 Adding subtitles to the video...",
+        "burn_failed": "❌ An error occurred while adding subtitles.",
+        "uploading": "📤 Uploading...",
+        "done_caption": "✅ Done! You can send another video/link, or return to normal mode with /start.",
+    },
+}
+
+
+def get_lang(user_id: int) -> str:
+    """bot.py'da saqlangan foydalanuvchi tilini o'qiydi (uz/ru/en).
+    Import funksiya ICHIDA — circular import bo'lmasligi uchun."""
+    try:
+        from bot import get_user_lang
+        return get_user_lang(user_id) or "uz"
+    except ImportError:
+        return "uz"
+
+
+def ct(key: str, lang: str, **kwargs) -> str:
+    lang = lang if lang in CAPTION_TEXTS else "uz"
+    text = CAPTION_TEXTS[lang].get(key) or CAPTION_TEXTS["uz"].get(key, "")
+    return text.format(**kwargs) if kwargs else text
+
+
 # ------------------------------------------------------------- /caption kirish
 
 @caption_router.message(Command("caption"))
 async def cmd_caption(message: Message, state: FSMContext):
     await state.set_state(CaptionStates.waiting_input)
-    await message.answer(
-        "🎬 <b>Titr qo'shish rejimi yoqildi.</b>\n\n"
-        "Menga video fayl yoki video havolasini (Instagram, TikTok va h.k.) yuboring — "
-        "o'zbek tilida bo'lsa, unga avtomatik titr yozib qaytaraman.\n\n"
-        "Istagancha video/link yuborishingiz mumkin — har birida titr qo'shib "
-        "boraman. Oddiy rejimga qaytish uchun /start, faqat shu rejimdan chiqish "
-        "uchun /cancel bosing.",
-        parse_mode="HTML",
-    )
+    lang = get_lang(message.from_user.id)
+    await message.answer(ct("mode_on", lang), parse_mode="HTML")
 
 
 @caption_router.callback_query(F.data == "mode_caption")
@@ -120,26 +210,28 @@ async def cb_caption_mode(callback: CallbackQuery, state: FSMContext):
 @caption_router.message(Command("cancel"), CaptionStates.waiting_input)
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Bekor qilindi.")
+    lang = get_lang(message.from_user.id)
+    await message.answer(ct("cancelled", lang))
 
 
 # ---------------------------------------------------------------- video kelsa
 
 @caption_router.message(CaptionStates.waiting_input, F.video | F.document)
 async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
+    lang = get_lang(message.from_user.id)
     media = message.video or message.document
     if media.file_size and media.file_size > MAX_FILE_MB * 1024 * 1024:
-        await message.answer(f"Video juda katta ({MAX_FILE_MB}MB dan oshmasin).")
+        await message.answer(ct("too_large", lang, max=MAX_FILE_MB))
         return
 
-    status = await message.answer("⏳ Video yuklab olinmoqda...")
+    status = await message.answer(ct("downloading", lang))
 
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
         src_path = tmp / "input.mp4"
         tg_file = await bot.get_file(media.file_id)
         await bot.download_file(tg_file.file_path, destination=src_path)
-        await process_and_reply(message, status, src_path, tmp)
+        await process_and_reply(message, status, src_path, tmp, lang)
 
     # ESLATMA: bu yerda ATAYLAB state.clear() chaqirilmaydi — rejim
     # davom etadi, shunda foydalanuvchi ketma-ket bir nechta video
@@ -151,20 +243,18 @@ async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
 
 @caption_router.message(CaptionStates.waiting_input, F.text.startswith("http"))
 async def handle_link_input(message: Message, state: FSMContext):
+    lang = get_lang(message.from_user.id)
     url = message.text.strip()
-    status = await message.answer("⏳ Video yuklab olinmoqda...")
+    status = await message.answer(ct("downloading", lang))
 
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)
         src_path = tmp / "input.mp4"
         ok = await download_video(url, str(src_path))
         if not ok:
-            await status.edit_text(
-                "❌ Videoni yuklab bo'lmadi. Havola to'g'riligini va postning "
-                "ochiq (public) ekanligini tekshiring."
-            )
+            await status.edit_text(ct("download_failed", lang))
             return
-        await process_and_reply(message, status, src_path, tmp)
+        await process_and_reply(message, status, src_path, tmp, lang)
 
     # ESLATMA: state.clear() ATAYLAB chaqirilmaydi — rejim davom etadi
     # (muvaffaqiyatli bo'lsa ham, xato bo'lsa ham), shunda foydalanuvchi
@@ -174,10 +264,8 @@ async def handle_link_input(message: Message, state: FSMContext):
 
 @caption_router.message(CaptionStates.waiting_input, F.text, ~F.text.startswith("/"))
 async def handle_unrecognized_input(message: Message):
-    await message.answer(
-        "Menga video fayl yoki video havolasini yuboring, yoki bekor qilish "
-        "uchun /cancel bosing."
-    )
+    lang = get_lang(message.from_user.id)
+    await message.answer(ct("unrecognized", lang))
 
 
 # ----------------------------------------------------------------- yordamchi
@@ -231,14 +319,12 @@ async def download_video(url: str, output_path: str) -> bool:
     return os.path.exists(output_path)
 
 
-async def process_and_reply(message: Message, status: Message, src_path: Path, tmp: Path):
-    """Audio ajratish -> transkript -> SRT -> kuydirish -> yuborish."""
+async def process_and_reply(message: Message, status: Message, src_path: Path, tmp: Path, lang: str = "uz"):
+    """Audio ajratish -> transkript -> ASS -> kuydirish -> yuborish."""
 
     duration = await get_duration(src_path)
     if duration and duration > MAX_VIDEO_SECONDS:
-        await status.edit_text(
-            f"❌ Video juda uzun ({int(duration)}s). {MAX_VIDEO_SECONDS}s dan qisqa video yuboring."
-        )
+        await status.edit_text(ct("too_long", lang, sec=int(duration), max=MAX_VIDEO_SECONDS))
         return
 
     audio_path = tmp / "audio.wav"
@@ -249,10 +335,10 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         ])
     except RuntimeError as e:
         logger.error(f"ffmpeg audio ajratish xatosi: {e}")
-        await status.edit_text("❌ Videoni o'qib bo'lmadi. Fayl formatini tekshiring.")
+        await status.edit_text(ct("cant_read", lang))
         return
 
-    await status.edit_text("🧠 Nutq tanilmoqda...")
+    await status.edit_text(ct("transcribing", lang))
     pipe = get_asr_pipeline()
     result = await asyncio.to_thread(
         pipe,
@@ -263,27 +349,24 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
     words = result.get("chunks") or []
 
     if not words:
-        await status.edit_text("❌ Videoda nutq topilmadi.")
+        await status.edit_text(ct("no_speech", lang))
         return
 
     srt_path = tmp / "subs.ass"
     video_width, video_height = await get_video_dimensions(src_path)
     write_ass(words, srt_path, video_width, video_height)
 
-    await status.edit_text("🎞 Titr videoga yozilmoqda...")
+    await status.edit_text(ct("burning", lang))
     out_path = tmp / "output.mp4"
     try:
         await burn_subtitles(src_path, srt_path, out_path)
     except RuntimeError as e:
         logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
-        await status.edit_text("❌ Titr yozishda xatolik yuz berdi.")
+        await status.edit_text(ct("burn_failed", lang))
         return
 
-    await status.edit_text("📤 Yuborilmoqda...")
-    await message.answer_video(
-        FSInputFile(out_path),
-        caption="✅ Tayyor! Yana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting."
-    )
+    await status.edit_text(ct("uploading", lang))
+    await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang))
     await status.delete()
 
 
@@ -404,8 +487,8 @@ def write_ass(
     ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Noto Sans"
     uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-noto" ni
     qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
-    font_size = max(18, int(video_height * 0.042))
-    margin_v = int(video_height * 0.06)
+    font_size = max(16, int(video_height * 0.032))
+    margin_v = int(video_height * 0.12)
 
     header = (
         "[Script Info]\n"
