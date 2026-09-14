@@ -368,8 +368,24 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
 
     await status.edit_text(ct("burning", lang))
     out_path = tmp / "output.mp4"
+
+    # Original faylning taxminiy bitrate'ini hisoblaymiz, shunda chiqish
+    # video hajmi asl faylga yaqin bo'ladi (standart CRF rejimi ba'zan
+    # original'dan sezilarli kattaroq fayl berib yuborar edi). ~15%
+    # audio uchun ajratib qo'yamiz (audio -c:a copy bilan o'zgarishsiz
+    # qoladi, shuning uchun umumiy bitrate'dan uning ulushini olib
+    # tashlaymiz).
+    target_kbps = None
     try:
-        await burn_subtitles(src_path, srt_path, out_path)
+        src_size_bytes = src_path.stat().st_size
+        if duration and duration > 0:
+            total_kbps = (src_size_bytes * 8 / 1000) / duration
+            target_kbps = max(500, int(total_kbps * 0.85))
+    except OSError:
+        pass
+
+    try:
+        await burn_subtitles(src_path, srt_path, out_path, target_kbps)
     except RuntimeError as e:
         logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
         await status.edit_text(ct("burn_failed", lang))
@@ -546,19 +562,27 @@ def write_ass(
     path.write_text("".join(lines), encoding="utf-8")
 
 
-async def burn_subtitles(src: Path, ass: Path, out: Path):
+async def burn_subtitles(src: Path, ass: Path, out: Path, target_kbps: Optional[int] = None):
     """libass 'ass' filtri bilan ASS subtitr faylini videoga hardsub qiladi
     (stil, fade-in/out va shrift ASS faylning o'zida belgilangan).
-    -preset veryfast -> standart ("medium") presetga nisbatan sezilarli
-    tezroq kodlaydi (video sifatida katta farq sezilmaydi, lekin vaqt
-    bir necha barobar qisqaradi)."""
+
+    target_kbps berilsa — video shu bitrate'ga yaqin kodlanadi (odatda
+    original faylning taxminiy bitrate'i), shunda chiqish fayli asl fayl
+    bilan taxminan bir xil hajmda bo'ladi (sifat-asosli CRF rejimi ba'zan
+    original'dan sezilarli kattaroq fayl berib yuborishi mumkin edi).
+    Berilmasa, standart CRF rejimiga tushadi."""
     ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
     vf = f"ass='{ass_escaped}'"
-    cmd = [
-        "ffmpeg", "-y", "-i", str(src),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-c:a", "copy",
-        str(out),
-    ]
+    cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast"]
+
+    if target_kbps and target_kbps > 0:
+        cmd += [
+            "-b:v", f"{target_kbps}k",
+            "-maxrate", f"{int(target_kbps * 1.4)}k",
+            "-bufsize", f"{int(target_kbps * 2)}k",
+        ]
+    else:
+        cmd += ["-crf", "23"]
+
+    cmd += ["-c:a", "copy", str(out)]
     await run_ffmpeg(cmd)
