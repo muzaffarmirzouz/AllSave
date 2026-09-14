@@ -28,6 +28,7 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
 import yt_dlp
 
 # /caption rejimi — video/link'ga o'zbekcha titr (hardsub) qo'shadi.
@@ -309,13 +310,7 @@ TEXTS = {
             "yuboring! \u2728\n\n"
             f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
             "bo'lgan videolarni yubora olaman.\n\n"
-            "\U0001F3A8 Bonus: /setlogo orqali o'zingizning shaxsiy logotipingizni "
-            "sozlab qo'ying \u2014 shundan keyin menga video FAYL yoki HAVOLA "
-            "yuborsangiz, natija o'sha logo bilan qaytadi! (O'chirish uchun: "
-            "/logooff)\n\n"
-            "\U0001F4DD Bonus: /caption orqali videongizga o'zbekcha titr "
-            "(subtitr) qo'shishimni so'rashingiz mumkin.\n\n"
-            "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
+            "\U0001F4CC Qo'shimcha xizmatlar:"
         ),
         "subscribe": (
             "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
@@ -388,12 +383,7 @@ TEXTS = {
             "включая карусели (несколько фото) \u2014 просто отправьте ссылку! \u2728\n\n"
             f"Примечание: из-за ограничений Telegram могу отправлять видео "
             f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
-            "\U0001F3A8 Бонус: настройте свой личный логотип через /setlogo — "
-            "и тогда любое видео (файлом или по ссылке) вернётся с вашим "
-            "логотипом! (Чтобы убрать: /logooff)\n\n"
-            "\U0001F4DD Бонус: через /caption можете попросить меня добавить "
-            "узбекские субтитры к вашему видео.\n\n"
-            "Язык можно изменить в любой момент через /til."
+            "\U0001F4CC Дополнительные услуги:"
         ),
         "subscribe": (
             "\u26D4 Чтобы пользоваться ботом, сначала подпишитесь на канал ниже, "
@@ -466,12 +456,7 @@ TEXTS = {
             "and carousels (multiple photos) \u2014 just send the link! \u2728\n\n"
             f"Note: due to Telegram limits, I can only send videos up to "
             f"{MAX_TELEGRAM_MB} MB.\n\n"
-            "\U0001F3A8 Bonus: set up your own personal logo with /setlogo — "
-            "then any video (file or link) you send will come back with "
-            "your logo! (To remove it: /logooff)\n\n"
-            "\U0001F4DD Bonus: use /caption to ask me to add Uzbek subtitles "
-            "to your video.\n\n"
-            "You can change the language anytime with /til."
+            "\U0001F4CC Additional services:"
         ),
         "subscribe": (
             "\u26D4 To use this bot, please first subscribe to the channel below, "
@@ -548,8 +533,29 @@ def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
     ])
 
 
+MAIN_MENU_LABELS = {
+    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "caption": "\U0001F4DD Videoga Text qo'yish", "lang": "\U0001F310 Til"},
+    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "caption": "\U0001F4DD Добавить текст на видео", "lang": "\U0001F310 Язык"},
+    "en": {"logo": "\U0001F3A8 Add logo to video", "caption": "\U0001F4DD Add text to video", "lang": "\U0001F310 Language"},
+}
+
+
+def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
+    labels = MAIN_MENU_LABELS.get(lang, MAIN_MENU_LABELS["uz"])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=labels["logo"], callback_data="start_setlogo")],
+        [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
+        [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
+    ])
+
+
 @router.message(F.text == "/start")
-async def cmd_start(message: Message, bot: Bot):
+async def cmd_start(message: Message, bot: Bot, state: FSMContext):
+    # Har safar /start bosilganda, foydalanuvchi /caption yoki /setlogo kabi
+    # jarayonda qolib ketgan bo'lsa ham, oddiy (logosiz, titrsiz) yuklab olish
+    # rejimiga qaytariladi.
+    await state.clear()
+
     track_user(message.from_user.id, message.from_user.username)
     lang = get_user_lang(message.from_user.id)
     if not lang:
@@ -558,7 +564,7 @@ async def cmd_start(message: Message, bot: Bot):
     if not await is_subscribed(bot, message.from_user.id):
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
-    await message.answer(t("start", lang))
+    await message.answer(t("start", lang), reply_markup=main_menu_keyboard(lang))
 
 
 @router.message(F.text == "/til")
@@ -643,6 +649,22 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
         await callback.answer()
     else:
         await callback.answer(t("not_subscribed_yet", lang), show_alert=True)
+
+
+@router.callback_query(F.data == "start_setlogo")
+async def cb_start_setlogo(callback: CallbackQuery):
+    """Asosiy menyudagi '🎨 Videoga Logo qo'yish' tugmasi — /setlogo bilan bir xil."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    _awaiting_logo_from.add(callback.from_user.id)
+    await callback.answer()
+    await callback.message.answer(t("setlogo_prompt", lang))
+
+
+@router.callback_query(F.data == "start_til")
+async def cb_start_til(callback: CallbackQuery):
+    """Asosiy menyudagi '🌐 Til' tugmasi — /til bilan bir xil."""
+    await callback.answer()
+    await callback.message.answer(TEXTS["uz"]["choose_lang"], reply_markup=language_keyboard())
 
 
 def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
