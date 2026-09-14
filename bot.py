@@ -18,6 +18,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -620,6 +621,31 @@ async def cmd_stats(message: Message):
     await message.answer(f"\U0001F465 Botdan foydalangan jami odamlar: {count_users()} kishi")
 
 
+def parse_broadcast_sections(text: str) -> dict:
+    """/xabar matnini tilga bo'lib ajratadi, agar admin UZ:/RU:/EN:
+    belgilarini alohida qatorlarda ishlatgan bo'lsa. Aks holda, butun
+    matnni HAMMA til uchun bir xil (orqaga moslik) qaytaradi."""
+    pattern = re.compile(r"^(UZ|RU|EN):\s*$", re.IGNORECASE | re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    if not matches:
+        whole = text.strip()
+        return {"uz": whole, "ru": whole, "en": whole}
+
+    sections = {}
+    for i, m in enumerate(matches):
+        lang = m.group(1).lower()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[lang] = text[start:end].strip()
+
+    # Belgilanmagan tillar uchun UZ bo'limi (yoki topilgan birinchisi)
+    # zaxira sifatida ishlatiladi.
+    fallback = sections.get("uz") or next(iter(sections.values()), "")
+    for lang in ("uz", "ru", "en"):
+        sections.setdefault(lang, fallback)
+    return sections
+
+
 @router.message(F.text.startswith("/xabar"))
 async def cmd_broadcast(message: Message, bot: Bot):
     if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
@@ -628,35 +654,43 @@ async def cmd_broadcast(message: Message, bot: Bot):
     parts = message.text.split("\n", 1)
     if len(parts) < 2 or not parts[1].strip():
         await message.answer(
-            "Foydalanish: birinchi qatorga /xabar deb yozing, "
-            "Shift+Enter bosib yangi qatorga o'ting, so'ng yubormoqchi "
-            "bo'lgan matnni yozib, hammasini BITTA xabar sifatida yuboring."
+            "Foydalanish: birinchi qatorga /xabar deb yozing, Shift+Enter bosib "
+            "yangi qatorga o'ting, so'ng matningizni yozib, hammasini BITTA xabar "
+            "sifatida yuboring.\n\n"
+            "• Bitta til uchun: shunchaki matnni yozing — hammaga bir xil boradi.\n\n"
+            "• Har bir tilga ALOHIDA matn (foydalanuvchining saqlangan tiliga "
+            "qarab avtomatik tanlanadi) uchun quyidagi formatda yozing:\n\n"
+            "UZ:\n<o'zbekcha matn>\n\n"
+            "RU:\n<ruscha matn>\n\n"
+            "EN:\n<inglizcha matn>"
         )
         return
 
-    broadcast_text = parts[1]
+    sections = parse_broadcast_sections(parts[1])
 
     conn = db()
-    user_ids = [row[0] for row in conn.execute("SELECT user_id FROM users").fetchall()]
+    rows = conn.execute("SELECT user_id, lang FROM users").fetchall()
     conn.close()
 
-    if not user_ids:
+    if not rows:
         await message.answer("Hali hech kim ro'yxatda yo'q.")
         return
 
-    progress = await message.answer(f"\u23F3 Yuborilmoqda... (0/{len(user_ids)})")
+    progress = await message.answer(f"\u23F3 Yuborilmoqda... (0/{len(rows)})")
     sent, failed = 0, 0
 
-    for i, uid in enumerate(user_ids, start=1):
+    for i, (uid, user_lang) in enumerate(rows, start=1):
+        lang = user_lang if user_lang in sections else "uz"
+        text_to_send = sections.get(lang) or sections.get("uz", "")
         try:
-            await bot.send_message(uid, broadcast_text)
+            await bot.send_message(uid, text_to_send)
             sent += 1
         except Exception as e:
             failed += 1
             log.warning(f"Xabar yuborilmadi ({uid}): {e}")
         if i % 25 == 0:
             try:
-                await safe_edit(progress, f"\u23F3 Yuborilmoqda... ({i}/{len(user_ids)})")
+                await safe_edit(progress, f"\u23F3 Yuborilmoqda... ({i}/{len(rows)})")
             except Exception:
                 pass
         await asyncio.sleep(0.05)  # Telegram limitiga urilib qolmaslik uchun
