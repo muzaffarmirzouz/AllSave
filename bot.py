@@ -30,6 +30,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 import yt_dlp
 
+# /caption rejimi — video/link'ga o'zbekcha titr (hardsub) qo'shadi.
+# MUHIM: bu quyidagi `router`dan OLDIN include qilinishi shart (pastdagi
+# main() funksiyasiga qarang).
+from caption_mode import caption_router
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 # Faqat /stats buyrug'ini ko'ra oladigan shaxslar (vergul bilan ID kiriting).
@@ -308,6 +313,8 @@ TEXTS = {
             "sozlab qo'ying \u2014 shundan keyin menga video FAYL yoki HAVOLA "
             "yuborsangiz, natija o'sha logo bilan qaytadi! (O'chirish uchun: "
             "/logooff)\n\n"
+            "\U0001F4DD Bonus: /caption orqali videongizga o'zbekcha titr "
+            "(subtitr) qo'shishimni so'rashingiz mumkin.\n\n"
             "Tilni istalgan vaqt /til orqali o'zgartirishingiz mumkin."
         ),
         "subscribe": (
@@ -384,6 +391,8 @@ TEXTS = {
             "\U0001F3A8 Бонус: настройте свой личный логотип через /setlogo — "
             "и тогда любое видео (файлом или по ссылке) вернётся с вашим "
             "логотипом! (Чтобы убрать: /logooff)\n\n"
+            "\U0001F4DD Бонус: через /caption можете попросить меня добавить "
+            "узбекские субтитры к вашему видео.\n\n"
             "Язык можно изменить в любой момент через /til."
         ),
         "subscribe": (
@@ -460,6 +469,8 @@ TEXTS = {
             "\U0001F3A8 Bonus: set up your own personal logo with /setlogo — "
             "then any video (file or link) you send will come back with "
             "your logo! (To remove it: /logooff)\n\n"
+            "\U0001F4DD Bonus: use /caption to ask me to add Uzbek subtitles "
+            "to your video.\n\n"
             "You can change the language anytime with /til."
         ),
         "subscribe": (
@@ -1243,6 +1254,11 @@ async def handle_link(message: Message, bot: Bot):
 async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
     dp = Dispatcher()
+
+    # MUHIM: caption_router `router`dan OLDIN include qilinishi shart —
+    # shunda /caption va CaptionStates jarayonidagi xabarlar avval
+    # caption_mode.py'dagi handlerlarga tekshiriladi.
+    dp.include_router(caption_router)
     dp.include_router(router)
 
     from aiogram.types import BotCommand
@@ -1251,6 +1267,7 @@ async def main():
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
         BotCommand(command="logooff", description="Shaxsiy logoni o'chirish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
+        BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
         BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
         BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
     ])
