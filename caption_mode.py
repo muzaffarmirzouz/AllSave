@@ -488,7 +488,7 @@ def write_ass(
     uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-noto" ni
     qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
     font_size = max(16, int(video_height * 0.032))
-    margin_v = int(video_height * 0.12)
+    margin_v = int(video_height * 0.24)
 
     header = (
         "[Script Info]\n"
