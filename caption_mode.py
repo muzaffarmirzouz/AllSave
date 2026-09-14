@@ -122,7 +122,7 @@ CAPTION_TEXTS = {
         "burning": "🎞 Titr videoga yozilmoqda...",
         "burn_failed": "❌ Titr yozishda xatolik yuz berdi.",
         "uploading": "📤 Yuborilmoqda...",
-        "done_caption": "✅ Tayyor! Yana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting.",
+        "done_caption": "✅ Tayyor! Bu videoga {bot} orqali titr yozib berildi.\n\nYana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting.",
     },
     "ru": {
         "mode_on": (
@@ -148,7 +148,7 @@ CAPTION_TEXTS = {
         "burning": "🎞 Добавляю субтитры на видео...",
         "burn_failed": "❌ Произошла ошибка при добавлении субтитров.",
         "uploading": "📤 Отправляю...",
-        "done_caption": "✅ Готово! Можете отправить ещё видео/ссылку, или вернуться в обычный режим через /start.",
+        "done_caption": "✅ Готово! Субтитры на это видео добавлены через {bot}.\n\nМожете отправить ещё видео/ссылку, или вернуться в обычный режим через /start.",
     },
     "en": {
         "mode_on": (
@@ -171,7 +171,7 @@ CAPTION_TEXTS = {
         "burning": "🎞 Adding subtitles to the video...",
         "burn_failed": "❌ An error occurred while adding subtitles.",
         "uploading": "📤 Uploading...",
-        "done_caption": "✅ Done! You can send another video/link, or return to normal mode with /start.",
+        "done_caption": "✅ Done! Subtitles were added to this video via {bot}.\n\nYou can send another video/link, or return to normal mode with /start.",
     },
 }
 
@@ -184,6 +184,15 @@ def get_lang(user_id: int) -> str:
         return get_user_lang(user_id) or "uz"
     except ImportError:
         return "uz"
+
+
+def get_bot_tag() -> str:
+    """bot.py'dagi BOT_USERNAME_TAG'ni qaytaradi (masalan '@AllSaveUz_Bot')."""
+    try:
+        from bot import BOT_USERNAME_TAG
+        return BOT_USERNAME_TAG
+    except ImportError:
+        return "@AllSaveUz_Bot"
 
 
 def ct(key: str, lang: str, **kwargs) -> str:
@@ -345,6 +354,7 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         str(audio_path),
         return_timestamps="word",
         generate_kwargs={"language": "uzbek", "task": "transcribe"},
+        batch_size=8,
     )
     words = result.get("chunks") or []
 
@@ -366,7 +376,8 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         return
 
     await status.edit_text(ct("uploading", lang))
-    await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang))
+    bot_tag = get_bot_tag()
+    await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang, bot=bot_tag))
     await status.delete()
 
 
@@ -529,8 +540,17 @@ def write_ass(
 
 async def burn_subtitles(src: Path, ass: Path, out: Path):
     """libass 'ass' filtri bilan ASS subtitr faylini videoga hardsub qiladi
-    (stil, fade-in/out va shrift ASS faylning o'zida belgilangan)."""
+    (stil, fade-in/out va shrift ASS faylning o'zida belgilangan).
+    -preset veryfast -> standart ("medium") presetga nisbatan sezilarli
+    tezroq kodlaydi (video sifatida katta farq sezilmaydi, lekin vaqt
+    bir necha barobar qisqaradi)."""
     ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
     vf = f"ass='{ass_escaped}'"
-    cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:a", "copy", str(out)]
+    cmd = [
+        "ffmpeg", "-y", "-i", str(src),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "copy",
+        str(out),
+    ]
     await run_ffmpeg(cmd)
