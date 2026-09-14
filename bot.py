@@ -303,13 +303,22 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Til o'zbekcha qilib saqlandi.",
         "start": (
-            "\U0001F44B Salom! Quyidagi platformalardan video/rasm havolasini "
-            "yuboring — yuklab beraman:\n"
-            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
-            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
-            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            "\U0001F44B Salom! Men video va rasm yuklab beruvchi botman.\n\n"
+            "\U0001F4E5 Quyidagi platformalardan video/rasm havolasini yuboring — "
+            "yuklab, sizga jo'nataman:\n\n"
+            "\U0001F4F8 Instagram (Reels, postlar, rasmlar)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (clip'lar)\n"
+            "\U0001F536 Reddit\n\n"
             f"(Video hajmi {MAX_TELEGRAM_MB}MB'dan oshmasligi kerak)\n\n"
-            "\u2728 Qo'shimcha xizmatlar:"
+            "\u2728 Qo'shimcha xizmatlar:\n"
+            "\U0001F3A8 Videoga shaxsiy logo (watermark) qo'yish\n"
+            "\U0001F4DD Videoga o'zbekcha titr (subtitr) yozish\n\n"
+            "Pastdagi tugmalardan foydalaning \U0001F447"
         ),
         "subscribe": (
             "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
@@ -373,13 +382,22 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Язык сохранён: русский.",
         "start": (
-            "\U0001F44B Привет! Отправьте ссылку на видео/фото с одной из "
-            "платформ — скачаю:\n"
-            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
-            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
-            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            "\U0001F44B Привет! Я бот для скачивания видео и фото.\n\n"
+            "\U0001F4E5 Отправьте ссылку на видео/фото с одной из платформ — "
+            "скачаю и пришлю вам:\n\n"
+            "\U0001F4F8 Instagram (Reels, посты, фото)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (клипы)\n"
+            "\U0001F536 Reddit\n\n"
             f"(Видео не должно превышать {MAX_TELEGRAM_MB}МБ)\n\n"
-            "\u2728 Дополнительные услуги:"
+            "\u2728 Дополнительные услуги:\n"
+            "\U0001F3A8 Добавление личного логотипа (водяного знака) на видео\n"
+            "\U0001F4DD Добавление узбекских субтитров на видео\n\n"
+            "Используйте кнопки ниже \U0001F447"
         ),
         "subscribe": (
             "\u26D4 Чтобы пользоваться ботом, сначала подпишитесь на канал ниже, "
@@ -444,13 +462,22 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Language set to English.",
         "start": (
-            "\U0001F44B Hi! Send a video/photo link from one of these "
-            "platforms — I'll download it:\n"
-            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
-            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
-            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            "\U0001F44B Hi! I'm a bot for downloading videos and photos.\n\n"
+            "\U0001F4E5 Send me a video/photo link from one of these platforms "
+            "and I'll download it for you:\n\n"
+            "\U0001F4F8 Instagram (Reels, posts, photos)\n"
+            "\U0001F3B5 TikTok\n"
+            "\U0001F535 VK\n"
+            "\U0001F537 Facebook\n"
+            "\u274C Twitter/X\n"
+            "\U0001F4CC Pinterest\n"
+            "\U0001F47E Twitch (clips)\n"
+            "\U0001F536 Reddit\n\n"
             f"(Videos must be under {MAX_TELEGRAM_MB}MB)\n\n"
-            "\u2728 Additional services:"
+            "\u2728 Additional services:\n"
+            "\U0001F3A8 Add your personal logo (watermark) to videos\n"
+            "\U0001F4DD Add Uzbek subtitles to videos\n\n"
+            "Use the buttons below \U0001F447"
         ),
         "subscribe": (
             "\u26D4 To use this bot, please first subscribe to the channel below, "
