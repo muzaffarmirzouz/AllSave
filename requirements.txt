@@ -3,3 +3,5 @@ yt-dlp[default,curl-cffi]
 bgutil-ytdlp-pot-provider
 rlottie-python[full]
 gallery-dl
+transformers
+torch
