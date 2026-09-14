@@ -1324,16 +1324,32 @@ async def main():
     dp.include_router(caption_router)
     dp.include_router(router)
 
-    from aiogram.types import BotCommand
-    await bot.set_my_commands([
+    from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
+    default_commands = [
         BotCommand(command="start", description="Botni ishga tushirish / yordam"),
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
         BotCommand(command="logooff", description="Shaxsiy logoni o'chirish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
         BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
+    ]
+    # Hamma foydalanuvchi uchun umumiy (standart) buyruqlar ro'yxati —
+    # cookies buyruqlari BU YERDA YO'Q, shuning uchun oddiy foydalanuvchilar
+    # menyusida ko'rinmaydi.
+    await bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
+
+    # Faqat OWNER_CHAT_IDS'dagi shaxslar uchun — yuqoridagi ro'yxat +
+    # cookies buyruqlari. Har bir admin uchun ALOHIDA (chat-scope) sozlanadi,
+    # chunki Telegram bunday "faqat ma'lum shaxslarga" qamrovni global emas,
+    # har bir chat_id uchun alohida talab qiladi.
+    owner_commands = default_commands + [
         BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
         BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
-    ])
+    ]
+    for owner_id in OWNER_CHAT_IDS:
+        try:
+            await bot.set_my_commands(owner_commands, scope=BotCommandScopeChat(chat_id=owner_id))
+        except Exception as e:
+            log.warning(f"Admin ({owner_id}) uchun buyruqlar menyusini sozlashda xato: {e}")
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
