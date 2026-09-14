@@ -29,12 +29,20 @@ from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyb
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 import yt_dlp
 
 # /caption rejimi — video/link'ga o'zbekcha titr (hardsub) qo'shadi.
 # MUHIM: bu quyidagi `router`dan OLDIN include qilinishi shart (pastdagi
 # main() funksiyasiga qarang).
 from caption_mode import caption_router
+
+
+class WatermarkStates(StatesGroup):
+    # "Videoga Logo qo'yish" tugmasi bosilgandan keyin, FAQAT keyingi bitta
+    # video shaxsiy logo bilan qaytadi — shundan keyin holat avtomatik
+    # tozalanadi (caption rejimi bilan bir xil, izchil xatti-harakat uchun).
+    waiting_video = State()
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
@@ -295,22 +303,13 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Til o'zbekcha qilib saqlandi.",
         "start": (
-            "Salom! Quyidagi platformalardan video havolasini yuboring — "
-            "yuklab, sizga jo'nataman:\n\n"
-            "\U0001F4F8 Instagram (Reels, postlar)\n"
-            "\U0001F3B5 TikTok\n"
-            "\U0001F535 VK\n"
-            "\U0001F537 Facebook\n"
-            "\u274C Twitter/X\n"
-            "\U0001F4CC Pinterest\n"
-            "\U0001F47E Twitch (clip'lar)\n"
-            "\U0001F536 Reddit\n\n"
-            "\U0001F5BC\uFE0F Bonus: Instagram'dagi RASM postlar va karusellarni "
-            "(bir nechta rasmli) ham yuklab bera olaman \u2014 shunchaki havolasini "
-            "yuboring! \u2728\n\n"
-            f"Eslatma: Telegram cheklovi tufayli faqat {MAX_TELEGRAM_MB} MB'gacha "
-            "bo'lgan videolarni yubora olaman.\n\n"
-            "\U0001F4CC Qo'shimcha xizmatlar:"
+            "\U0001F44B Salom! Quyidagi platformalardan video/rasm havolasini "
+            "yuboring — yuklab beraman:\n"
+            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
+            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
+            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            f"(Video hajmi {MAX_TELEGRAM_MB}MB'dan oshmasligi kerak)\n\n"
+            "\u2728 Qo'shimcha xizmatlar:"
         ),
         "subscribe": (
             "\u26D4 Botdan foydalanish uchun avval quyidagi kanalga a'zo bo'ling, "
@@ -364,26 +363,23 @@ TEXTS = {
         "logo_save_error": "\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
         "logo_removed": "\u2705 Shaxsiy logo o'chirildi. Endi videolar logosiz qaytadi.",
         "no_logo_to_remove": "\U0001F4A1 Sizda hozir o'chiriladigan logo yo'q.",
+        "send_video_for_logo": (
+            "\U0001F3A8 Logo rejimi yoqildi. Endi menga yuboradigan HAR BIR "
+            "video (fayl yoki havola) shaxsiy logotipingiz bilan qaytadi.\n\n"
+            "Oddiy (logosiz) rejimga qaytish uchun /start bosing."
+        ),
     },
     "ru": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Язык сохранён: русский.",
         "start": (
-            "Привет! Отправьте ссылку на видео с одной из платформ — "
-            "скачаю и пришлю вам:\n\n"
-            "\U0001F4F8 Instagram (Reels, посты)\n"
-            "\U0001F3B5 TikTok\n"
-            "\U0001F535 VK\n"
-            "\U0001F537 Facebook\n"
-            "\u274C Twitter/X\n"
-            "\U0001F4CC Pinterest\n"
-            "\U0001F47E Twitch (клипы)\n"
-            "\U0001F536 Reddit\n\n"
-            "\U0001F5BC\uFE0F Бонус: умею скачивать и ФОТО-посты Instagram, "
-            "включая карусели (несколько фото) \u2014 просто отправьте ссылку! \u2728\n\n"
-            f"Примечание: из-за ограничений Telegram могу отправлять видео "
-            f"размером до {MAX_TELEGRAM_MB} МБ.\n\n"
-            "\U0001F4CC Дополнительные услуги:"
+            "\U0001F44B Привет! Отправьте ссылку на видео/фото с одной из "
+            "платформ — скачаю:\n"
+            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
+            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
+            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            f"(Видео не должно превышать {MAX_TELEGRAM_MB}МБ)\n\n"
+            "\u2728 Дополнительные услуги:"
         ),
         "subscribe": (
             "\u26D4 Чтобы пользоваться ботом, сначала подпишитесь на канал ниже, "
@@ -437,26 +433,24 @@ TEXTS = {
         "logo_save_error": "\u274C Ошибка при сохранении логотипа, попробуйте ещё раз.",
         "logo_removed": "\u2705 Личный логотип удалён. Теперь видео будут без логотипа.",
         "no_logo_to_remove": "\U0001F4A1 У вас сейчас нет логотипа для удаления.",
+        "send_video_for_logo": (
+            "\U0001F3A8 Режим логотипа включён. Теперь КАЖДОЕ видео (файл или "
+            "ссылка), которое вы мне отправите, будет возвращаться с вашим "
+            "личным логотипом.\n\n"
+            "Чтобы вернуться в обычный режим (без логотипа), нажмите /start."
+        ),
     },
     "en": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Language set to English.",
         "start": (
-            "Hi! Send me a video link from one of these platforms and "
-            "I'll download it for you:\n\n"
-            "\U0001F4F8 Instagram (Reels, posts)\n"
-            "\U0001F3B5 TikTok\n"
-            "\U0001F535 VK\n"
-            "\U0001F537 Facebook\n"
-            "\u274C Twitter/X\n"
-            "\U0001F4CC Pinterest\n"
-            "\U0001F47E Twitch (clips)\n"
-            "\U0001F536 Reddit\n\n"
-            "\U0001F5BC\uFE0F Bonus: I can also download Instagram PHOTO posts "
-            "and carousels (multiple photos) \u2014 just send the link! \u2728\n\n"
-            f"Note: due to Telegram limits, I can only send videos up to "
-            f"{MAX_TELEGRAM_MB} MB.\n\n"
-            "\U0001F4CC Additional services:"
+            "\U0001F44B Hi! Send a video/photo link from one of these "
+            "platforms — I'll download it:\n"
+            "\U0001F4F8 Instagram • \U0001F3B5 TikTok • \U0001F535 VK • "
+            "\U0001F537 Facebook • \u274C X • \U0001F4CC Pinterest • "
+            "\U0001F47E Twitch • \U0001F536 Reddit\n\n"
+            f"(Videos must be under {MAX_TELEGRAM_MB}MB)\n\n"
+            "\u2728 Additional services:"
         ),
         "subscribe": (
             "\u26D4 To use this bot, please first subscribe to the channel below, "
@@ -509,6 +503,11 @@ TEXTS = {
         "logo_save_error": "\u274C Error saving the logo, please try again.",
         "logo_removed": "\u2705 Personal logo removed. Videos will now come back without a logo.",
         "no_logo_to_remove": "\U0001F4A1 You don't have a logo set up to remove right now.",
+        "send_video_for_logo": (
+            "\U0001F3A8 Logo mode is on. Now EVERY video (file or link) you "
+            "send me will come back with your personal logo.\n\n"
+            "To return to plain mode (no logo), press /start."
+        ),
     },
 }
 
@@ -652,12 +651,21 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data == "start_setlogo")
-async def cb_start_setlogo(callback: CallbackQuery):
-    """Asosiy menyudagi '🎨 Videoga Logo qo'yish' tugmasi — /setlogo bilan bir xil."""
+async def cb_start_setlogo(callback: CallbackQuery, state: FSMContext):
+    """Asosiy menyudagi '🎨 Videoga Logo qo'yish' tugmasi.
+
+    Agar foydalanuvchida allaqachon shaxsiy logo bo'lsa — faqat KEYINGI
+    bitta videoni shu logo bilan qaytarish uchun holatga o'tkazadi (keyin
+    avtomatik oddiy rejimga qaytadi). Agar logo hali sozlanmagan bo'lsa —
+    avval uni sozlashni so'raydi."""
     lang = get_user_lang(callback.from_user.id) or "uz"
-    _awaiting_logo_from.add(callback.from_user.id)
     await callback.answer()
-    await callback.message.answer(t("setlogo_prompt", lang))
+    if _find_user_logo(callback.from_user.id):
+        await state.set_state(WatermarkStates.waiting_video)
+        await callback.message.answer(t("send_video_for_logo", lang))
+    else:
+        _awaiting_logo_from.add(callback.from_user.id)
+        await callback.message.answer(t("setlogo_prompt", lang))
 
 
 @router.callback_query(F.data == "start_til")
@@ -858,13 +866,16 @@ async def cmd_logooff(message: Message):
 
 
 @router.message(F.text == "/setlogo")
-async def cmd_setlogo(message: Message):
-    """Foydalanuvchi o'zining shaxsiy logo (watermark) GIF'ini o'rnatishni
-    boshlaydi. Endi bu HAR KIM uchun ochiq — har kim o'z logosini sozlashi
-    mumkin."""
+async def cmd_setlogo(message: Message, state: FSMContext):
+    """Agar shaxsiy logo allaqachon bor bo'lsa — faqat keyingi video uchun
+    qo'llash holatiga o'tkazadi; bo'lmasa, yangi logo sozlashni so'raydi."""
     lang = get_user_lang(message.from_user.id) or "uz"
-    _awaiting_logo_from.add(message.from_user.id)
-    await message.answer(t("setlogo_prompt", lang))
+    if _find_user_logo(message.from_user.id):
+        await state.set_state(WatermarkStates.waiting_video)
+        await message.answer(t("send_video_for_logo", lang))
+    else:
+        _awaiting_logo_from.add(message.from_user.id)
+        await message.answer(t("setlogo_prompt", lang))
 
 
 @router.message(F.text == "/setposition")
@@ -921,7 +932,7 @@ def _convert_tgs_to_apng_sync(tgs_path: str, apng_path: str) -> bool:
 
 
 @router.message(F.animation | F.document | F.sticker)
-async def handle_logo_upload(message: Message, bot: Bot):
+async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
     """/setlogo, /setcookies_ig yoki /setcookies_yt buyrug'idan keyin
     yuborilgan faylni tegishli joyga saqlaydi. GIF/video-stiker/hujjat
     (logo uchun — HAR KIM) va cookies.txt (cookies uchun — FAQAT bot
@@ -984,22 +995,26 @@ async def handle_logo_upload(message: Message, bot: Bot):
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
         await message.answer(t("logo_saved", lang))
+        # Logo yangi sozlandi — darhol KEYINGI video shu logo bilan qaytishi
+        # uchun, qayta tugma bosmasdan, video kutish holatiga o'tkazamiz.
+        await state.set_state(WatermarkStates.waiting_video)
     except Exception as e:
         log.error(f"Logo saqlashda xato: {e}")
         await message.answer(t("logo_save_error", lang))
 
 
-@router.message(F.video)
+@router.message(WatermarkStates.waiting_video, F.video)
 async def handle_owner_video(message: Message, bot: Bot):
-    """Har qanday foydalanuvchi video yuborsa, unga GIF logo (watermark)
-    qo'yib qaytaradi — FAQAT shaxsiy logotipini sozlagan bo'lsa (/setlogo
-    orqali). Boshqa buyruqlar (link yuklab olish) kabi majburiy obunani
-    ham talab qiladi."""
+    """'Videoga Logo qo'yish' tugmasi (yoki /setlogo) bosilgandan keyin,
+    logo rejimi YOQILGAN holda qoladi — foydalanuvchi yuborgan HAR BIR
+    video shaxsiy logo (watermark) bilan qaytariladi, /start bosilmaguncha
+    (holat faqat /start orqali tozalanadi, bu yerda emas). Majburiy
+    obunani ham talab qiladi."""
     log.info(f"WMARK: handler boshlandi, user={message.from_user.id}")
+    lang = get_user_lang(message.from_user.id) or "uz"
     logo_file = _find_user_logo(message.from_user.id)
     if not logo_file:
         log.info("WMARK: shaxsiy logo yo'q, to'xtatildi (video o'zgarishsiz qoladi)")
-        lang = get_user_lang(message.from_user.id) or "uz"
         await message.answer(t("no_personal_logo", lang))
         return
     position = get_user_logo_position(message.from_user.id)
@@ -1007,7 +1022,6 @@ async def handle_owner_video(message: Message, bot: Bot):
 
     if not await is_subscribed(bot, message.from_user.id):
         log.info("WMARK: obuna emas, to'xtatildi")
-        lang = get_user_lang(message.from_user.id) or "uz"
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
 
