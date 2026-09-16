@@ -377,8 +377,10 @@ TEXTS = {
         "logo_removed": "\u2705 Shaxsiy logo o'chirildi. Endi videolar logosiz qaytadi.",
         "no_logo_to_remove": "\U0001F4A1 Sizda hozir o'chiriladigan logo yo'q.",
         "send_video_for_logo": (
-            "\U0001F3A8 Logo rejimi yoqildi. Endi menga yuboradigan HAR BIR "
-            "video (fayl yoki havola) shaxsiy logotipingiz bilan qaytadi.\n\n"
+            "\u2705 <b>Logo rejimi yoqildi!</b>\n\n"
+            "Endi bemalol videolarni o'z logoyingiz bilan yuklab olishingiz "
+            "mumkin \u2014 menga yuboradigan HAR BIR video (fayl yoki havola) "
+            "shaxsiy logotipingiz bilan avtomatik qaytadi.\n\n"
             "Oddiy (logosiz) rejimga qaytish uchun /start bosing."
         ),
     },
@@ -459,9 +461,10 @@ TEXTS = {
         "logo_removed": "\u2705 Личный логотип удалён. Теперь видео будут без логотипа.",
         "no_logo_to_remove": "\U0001F4A1 У вас сейчас нет логотипа для удаления.",
         "send_video_for_logo": (
-            "\U0001F3A8 Режим логотипа включён. Теперь КАЖДОЕ видео (файл или "
-            "ссылка), которое вы мне отправите, будет возвращаться с вашим "
-            "личным логотипом.\n\n"
+            "\u2705 <b>Режим логотипа включён!</b>\n\n"
+            "Теперь можете свободно скачивать видео со своим логотипом \u2014 "
+            "КАЖДОЕ видео (файл или ссылка), которое вы мне отправите, будет "
+            "автоматически возвращаться с вашим личным логотипом.\n\n"
             "Чтобы вернуться в обычный режим (без логотипа), нажмите /start."
         ),
     },
@@ -541,8 +544,10 @@ TEXTS = {
         "logo_removed": "\u2705 Personal logo removed. Videos will now come back without a logo.",
         "no_logo_to_remove": "\U0001F4A1 You don't have a logo set up to remove right now.",
         "send_video_for_logo": (
-            "\U0001F3A8 Logo mode is on. Now EVERY video (file or link) you "
-            "send me will come back with your personal logo.\n\n"
+            "\u2705 <b>Logo mode is on!</b>\n\n"
+            "You can now freely download videos with your own logo \u2014 "
+            "EVERY video (file or link) you send me will automatically come "
+            "back with your personal logo.\n\n"
             "To return to plain mode (no logo), press /start."
         ),
     },
@@ -724,15 +729,15 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
 async def cb_start_setlogo(callback: CallbackQuery, state: FSMContext):
     """Asosiy menyudagi '🎨 Videoga Logo qo'yish' tugmasi.
 
-    Agar foydalanuvchida allaqachon shaxsiy logo bo'lsa — faqat KEYINGI
-    bitta videoni shu logo bilan qaytarish uchun holatga o'tkazadi (keyin
-    avtomatik oddiy rejimga qaytadi). Agar logo hali sozlanmagan bo'lsa —
-    avval uni sozlashni so'raydi."""
+    Agar foydalanuvchida allaqachon shaxsiy logo bo'lsa — logo rejimini
+    yoqadi (HAR BIR keyingi video shu logo bilan qaytadi, /start
+    bosilmaguncha). Agar logo hali sozlanmagan bo'lsa — avval uni
+    sozlashni so'raydi."""
     lang = get_user_lang(callback.from_user.id) or "uz"
     await callback.answer()
     if _find_user_logo(callback.from_user.id):
         await state.set_state(WatermarkStates.waiting_video)
-        await callback.message.answer(t("send_video_for_logo", lang))
+        await callback.message.answer(t("send_video_for_logo", lang), parse_mode="HTML")
     else:
         _awaiting_logo_from.add(callback.from_user.id)
         await callback.message.answer(t("setlogo_prompt", lang))
@@ -942,7 +947,7 @@ async def cmd_setlogo(message: Message, state: FSMContext):
     lang = get_user_lang(message.from_user.id) or "uz"
     if _find_user_logo(message.from_user.id):
         await state.set_state(WatermarkStates.waiting_video)
-        await message.answer(t("send_video_for_logo", lang))
+        await message.answer(t("send_video_for_logo", lang), parse_mode="HTML")
     else:
         _awaiting_logo_from.add(message.from_user.id)
         await message.answer(t("setlogo_prompt", lang))
