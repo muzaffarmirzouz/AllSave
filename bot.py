@@ -1216,7 +1216,7 @@ async def handle_link(message: Message, bot: Bot):
         ydl_opts["extractor_args"] = {
             "youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}
         }
-    if "instagram.com" in url:
+    if "instagram.com" in url or "facebook.com" in url or "fb.watch" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
             ydl_opts["impersonate"] = ImpersonateTarget("chrome")
@@ -1300,7 +1300,11 @@ async def handle_link(message: Message, bot: Bot):
         # RASM post/karusel bo'lsa (Instagram, Twitter/X va h.k.), yt-dlp
         # "no video" turidagi xato beradi (u faqat video uchun mo'ljallangan).
         # Bunday holda gallery-dl orqali (rasm uchun mos vosita) qayta urinamiz.
-        no_video_patterns = ("no video formats", "no video could be found")
+        no_video_patterns = (
+            "no video formats",
+            "no video could be found",
+            "there is no video in this post",
+        )
         if any(p in err_text for p in no_video_patterns):
             try:
                 img_dir = tempfile.mkdtemp()
