@@ -1159,7 +1159,7 @@ def _ensure_telegram_compatible_sync(path: str) -> str:
 
 
 @router.message(F.text.startswith("http"))
-async def handle_link(message: Message, bot: Bot):
+async def handle_link(message: Message, bot: Bot, state: FSMContext):
     track_user(message.from_user.id, message.from_user.username)
     lang = get_user_lang(message.from_user.id) or "uz"
 
@@ -1257,11 +1257,13 @@ async def handle_link(message: Message, bot: Bot):
             await status.delete()
             return
 
-        # Agar foydalanuvchi o'zining shaxsiy logotipini sozlagan bo'lsa,
-        # havola orqali yuklangan videoga ham shuni qo'yamiz (bu qadam
-        # allaqachon H.264+AAC'ga qayta kodlaydi, shuning uchun keyingi
-        # kodek-tekshiruvi shart bo'lmaydi).
-        user_logo = _find_user_logo(message.from_user.id)
+        # Agar foydalanuvchi "Videoga Logo qo'yish" rejimida bo'lsa (va
+        # shaxsiy logotipi sozlangan bo'lsa), havola orqali yuklangan
+        # videoga ham shuni qo'yamiz. MUHIM: bu ATAYLAB WatermarkStates
+        # holatiga bog'langan — /start bosilgach avtomatik o'chadi, aks
+        # holda logo har doim (rejimdan tashqarida ham) qo'yilib qolar edi.
+        current_state = await state.get_state()
+        user_logo = _find_user_logo(message.from_user.id) if current_state == WatermarkStates.waiting_video.state else None
         if user_logo:
             wm_output = downloaded_path.rsplit(".", 1)[0] + "_wm.mp4"
             try:
