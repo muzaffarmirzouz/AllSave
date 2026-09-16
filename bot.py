@@ -367,8 +367,11 @@ TEXTS = {
             "GIF'ga o'girib, o'sha GIF'ni yuboring."
         ),
         "logo_saved": (
-            "\u2705 Yangi logo saqlandi! Endi menga video FAYL yoki HAVOLA "
-            "yuborsangiz, shu logo bilan qaytadi."
+            "\u2705 <b>Logotip muvaffaqiyatli o'rnatildi!</b>\n\n"
+            "Endi bemalol videolarni o'z logoyingiz bilan yuklab olishingiz "
+            "mumkin \u2014 menga yuboradigan HAR BIR video (fayl yoki havola) "
+            "shu logo bilan avtomatik qaytadi.\n\n"
+            "Oddiy (logosiz) rejimga qaytish uchun /start bosing."
         ),
         "logo_save_error": "\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
         "logo_removed": "\u2705 Shaxsiy logo o'chirildi. Endi videolar logosiz qaytadi.",
@@ -446,8 +449,11 @@ TEXTS = {
             "и отправьте этот GIF."
         ),
         "logo_saved": (
-            "\u2705 Новый логотип сохранён! Теперь если отправите мне видео "
-            "ФАЙЛОМ или ССЫЛКОЙ, результат вернётся с этим логотипом."
+            "\u2705 <b>Логотип успешно установлен!</b>\n\n"
+            "Теперь можете свободно скачивать видео со своим логотипом \u2014 "
+            "КАЖДОЕ видео (файл или ссылка), которое вы мне отправите, будет "
+            "автоматически возвращаться с этим логотипом.\n\n"
+            "Чтобы вернуться в обычный (без логотипа) режим, нажмите /start."
         ),
         "logo_save_error": "\u274C Ошибка при сохранении логотипа, попробуйте ещё раз.",
         "logo_removed": "\u2705 Личный логотип удалён. Теперь видео будут без логотипа.",
@@ -525,8 +531,11 @@ TEXTS = {
             "that GIF instead."
         ),
         "logo_saved": (
-            "\u2705 New logo saved! Now if you send me a video FILE or LINK, "
-            "the result will come back with this logo."
+            "\u2705 <b>Logo successfully set!</b>\n\n"
+            "You can now freely download videos with your own logo \u2014 "
+            "EVERY video (file or link) you send me will automatically come "
+            "back with this logo.\n\n"
+            "To return to the normal (no logo) mode, press /start."
         ),
         "logo_save_error": "\u274C Error saving the logo, please try again.",
         "logo_removed": "\u2705 Personal logo removed. Videos will now come back without a logo.",
@@ -1055,7 +1064,7 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
             old_path = os.path.join(user_dir, f"logo{old_ext}")
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
-        await message.answer(t("logo_saved", lang))
+        await message.answer(t("logo_saved", lang), parse_mode="HTML")
         # Logo yangi sozlandi — darhol KEYINGI video shu logo bilan qaytishi
         # uchun, qayta tugma bosmasdan, video kutish holatiga o'tkazamiz.
         await state.set_state(WatermarkStates.waiting_video)
