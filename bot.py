@@ -355,9 +355,15 @@ TEXTS = {
             "istalgan turdagi Telegram stikerini (video-stiker yoki animatsion "
             "stiker) hozir menga yuboring.\n\n"
             "(Oddiy yuborsangiz yetarli \u2014 alohida buyruq kerak emas.)\n\n"
+            "\u26A0\uFE0F Eski logotipingiz shu yangisi bilan avtomatik "
+            "almashtiriladi.\n\n"
             "Shundan keyin menga video HAVOLASI yuborsangiz ham, natija shu logo "
             "bilan qaytadi!"
         ),
+        "logo_exists_choice": "\U0001F3A8 Sizda allaqachon shaxsiy logo bor. Nima qilmoqchisiz?",
+        "btn_logo_continue": "\u2705 Shu logo bilan davom etish",
+        "btn_logo_replace": "\U0001F504 Yangi logo yuklash",
+        "btn_logo_off": "\U0001F6AB Logoni o'chirish",
         "setposition_prompt": "\U0001F4CD Logo videoning qaysi qismida chiqsin?",
         "position_changed": "\u2705 Logo joyi o'zgartirildi: {label}",
         "unknown_position": "Noma'lum joy.",
@@ -439,9 +445,14 @@ TEXTS = {
             "(видео-стикер или анимированный стикер), который будет "
             "использоваться как ваш личный логотип.\n\n"
             "(Просто отправьте — отдельная команда не нужна.)\n\n"
+            "\u26A0\uFE0F Ваш старый логотип будет автоматически заменён новым.\n\n"
             "После этого, если вы отправите мне ССЫЛКУ на видео, результат "
             "тоже вернётся с этим логотипом!"
         ),
+        "logo_exists_choice": "\U0001F3A8 У вас уже есть личный логотип. Что хотите сделать?",
+        "btn_logo_continue": "\u2705 Продолжить с этим логотипом",
+        "btn_logo_replace": "\U0001F504 Загрузить новый логотип",
+        "btn_logo_off": "\U0001F6AB Удалить логотип",
         "setposition_prompt": "\U0001F4CD В какой части видео должен появляться логотип?",
         "position_changed": "\u2705 Позиция логотипа изменена: {label}",
         "unknown_position": "Неизвестная позиция.",
@@ -522,9 +533,14 @@ TEXTS = {
             "\U0001F3A8 Send me a GIF or any Telegram sticker (video sticker "
             "or animated sticker) to use as your personal logo.\n\n"
             "(Just send it \u2014 no separate command needed.)\n\n"
+            "\u26A0\uFE0F Your old logo will be automatically replaced by the new one.\n\n"
             "After that, if you send me a video LINK too, the result will "
             "come back with this logo!"
         ),
+        "logo_exists_choice": "\U0001F3A8 You already have a personal logo. What would you like to do?",
+        "btn_logo_continue": "\u2705 Continue with this logo",
+        "btn_logo_replace": "\U0001F504 Upload a new logo",
+        "btn_logo_off": "\U0001F6AB Remove logo",
         "setposition_prompt": "\U0001F4CD Where on the video should the logo appear?",
         "position_changed": "\u2705 Logo position changed: {label}",
         "unknown_position": "Unknown position.",
@@ -587,6 +603,17 @@ def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=labels["logo"], callback_data="start_setlogo")],
         [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
         [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
+    ])
+
+
+def logo_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Foydalanuvchida allaqachon shaxsiy logo bo'lganda ko'rsatiladi —
+    mavjud logo bilan davom etish, uni yangisiga almashtirish, yoki
+    butunlay o'chirish o'rtasida tanlov beradi."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_logo_continue", lang), callback_data="logo_continue")],
+        [InlineKeyboardButton(text=t("btn_logo_replace", lang), callback_data="logo_replace")],
+        [InlineKeyboardButton(text=t("btn_logo_off", lang), callback_data="logo_off")],
     ])
 
 
@@ -729,18 +756,46 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
 async def cb_start_setlogo(callback: CallbackQuery, state: FSMContext):
     """Asosiy menyudagi '🎨 Videoga Logo qo'yish' tugmasi.
 
-    Agar foydalanuvchida allaqachon shaxsiy logo bo'lsa — logo rejimini
-    yoqadi (HAR BIR keyingi video shu logo bilan qaytadi, /start
-    bosilmaguncha). Agar logo hali sozlanmagan bo'lsa — avval uni
+    Agar foydalanuvchida allaqachon shaxsiy logo bo'lsa — mavjud logo
+    bilan davom etish yoki yangisiga almashtirish o'rtasida tanlov
+    beradi. Agar logo hali sozlanmagan bo'lsa — to'g'ridan-to'g'ri uni
     sozlashni so'raydi."""
     lang = get_user_lang(callback.from_user.id) or "uz"
     await callback.answer()
     if _find_user_logo(callback.from_user.id):
-        await state.set_state(WatermarkStates.waiting_video)
-        await callback.message.answer(t("send_video_for_logo", lang), parse_mode="HTML")
+        await callback.message.answer(t("logo_exists_choice", lang), reply_markup=logo_choice_keyboard(lang))
     else:
         _awaiting_logo_from.add(callback.from_user.id)
         await callback.message.answer(t("setlogo_prompt", lang))
+
+
+def logo_active_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Logo rejimi FAOL bo'lgan paytda ko'rsatiladi — tez o'chirish
+    imkoniyati uchun."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_logo_off", lang), callback_data="logo_off")],
+    ])
+
+
+@router.callback_query(F.data == "logo_continue")
+async def cb_logo_continue(callback: CallbackQuery, state: FSMContext):
+    """Mavjud logo bilan davom etish tanlandi — logo rejimini yoqadi."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    await state.set_state(WatermarkStates.waiting_video)
+    await callback.message.answer(
+        t("send_video_for_logo", lang), parse_mode="HTML", reply_markup=logo_active_keyboard(lang)
+    )
+
+
+@router.callback_query(F.data == "logo_replace")
+async def cb_logo_replace(callback: CallbackQuery):
+    """Yangi logo yuklash tanlandi — eskisi keyingi fayl yuborilganda
+    avtomatik almashtiriladi (handle_logo_upload'da)."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    _awaiting_logo_from.add(callback.from_user.id)
+    await callback.message.answer(t("setlogo_prompt", lang))
 
 
 @router.callback_query(F.data == "start_til")
@@ -931,23 +986,42 @@ async def _remove_user_logo(user_id: int) -> bool:
     return removed
 
 
+async def _do_logooff(user_id: int, lang: str) -> str:
+    """Logoni o'chiradi va foydalanuvchiga ko'rsatiladigan matnni qaytaradi
+    (/logooff buyrug'i va '🚫 Logoni o'chirish' tugmasi ikkalasi ham shuni
+    ishlatadi)."""
+    removed = await _remove_user_logo(user_id)
+    return t("logo_removed" if removed else "no_logo_to_remove", lang)
+
+
 @router.message(F.text == "/logooff")
-async def cmd_logooff(message: Message):
+async def cmd_logooff(message: Message, state: FSMContext):
     """Foydalanuvchining shaxsiy logotipini bitta oddiy buyruq bilan
     o'chiradi."""
     lang = get_user_lang(message.from_user.id) or "uz"
-    removed = await _remove_user_logo(message.from_user.id)
-    await message.answer(t("logo_removed" if removed else "no_logo_to_remove", lang))
+    text = await _do_logooff(message.from_user.id, lang)
+    await state.clear()
+    await message.answer(text)
+
+
+@router.callback_query(F.data == "logo_off")
+async def cb_logo_off(callback: CallbackQuery, state: FSMContext):
+    """Logo bo'limidagi '🚫 Logoni o'chirish' tugmasi — /logooff bilan bir xil."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    text = await _do_logooff(callback.from_user.id, lang)
+    await state.clear()
+    await callback.message.answer(text)
 
 
 @router.message(F.text == "/setlogo")
-async def cmd_setlogo(message: Message, state: FSMContext):
-    """Agar shaxsiy logo allaqachon bor bo'lsa — faqat keyingi video uchun
-    qo'llash holatiga o'tkazadi; bo'lmasa, yangi logo sozlashni so'raydi."""
+async def cmd_setlogo(message: Message):
+    """Agar shaxsiy logo allaqachon bor bo'lsa — davom etish yoki
+    almashtirish o'rtasida tanlov beradi; bo'lmasa, yangi logo sozlashni
+    so'raydi."""
     lang = get_user_lang(message.from_user.id) or "uz"
     if _find_user_logo(message.from_user.id):
-        await state.set_state(WatermarkStates.waiting_video)
-        await message.answer(t("send_video_for_logo", lang), parse_mode="HTML")
+        await message.answer(t("logo_exists_choice", lang), reply_markup=logo_choice_keyboard(lang))
     else:
         _awaiting_logo_from.add(message.from_user.id)
         await message.answer(t("setlogo_prompt", lang))
@@ -1069,7 +1143,7 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
             old_path = os.path.join(user_dir, f"logo{old_ext}")
             if old_path != new_path and os.path.exists(old_path):
                 os.remove(old_path)
-        await message.answer(t("logo_saved", lang), parse_mode="HTML")
+        await message.answer(t("logo_saved", lang), parse_mode="HTML", reply_markup=logo_active_keyboard(lang))
         # Logo yangi sozlandi — darhol KEYINGI video shu logo bilan qaytishi
         # uchun, qayta tugma bosmasdan, video kutish holatiga o'tkazamiz.
         await state.set_state(WatermarkStates.waiting_video)
