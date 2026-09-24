@@ -5,3 +5,4 @@ rlottie-python[full]
 gallery-dl
 transformers
 torch
+# force rebuild
