@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
+from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto, InputMediaVideo
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -844,6 +844,35 @@ def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
     return files
 
 
+def _download_media_gallery_dl_sync(url: str, output_dir: str) -> list:
+    """yt-dlp Instagram'dan JSON javobini o'qiy olmay xato bergan hollarda
+    (masalan "Failed to parse JSON" / bo'sh javob) zaxira (backup) vosita
+    sifatida ishlatiladi — gallery-dl o'zining alohida scraper mexanizmi
+    orqali RASM ham, VIDEO ham yuklab olishga urinadi (yt-dlp'dan
+    mustaqil, shuning uchun yt-dlp extractori singan joyda ko'pincha
+    ishlab ketadi). Yuklangan barcha media fayllar yo'llarini (rasm+video,
+    tartiblangan) qaytaradi. Bloklaydigan (sinxron) funksiya."""
+    import subprocess
+
+    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime"]
+    if IG_COOKIES_FILE:
+        cmd += ["--cookies", IG_COOKIES_FILE]
+    cmd.append(url)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"gallery-dl xato: {result.stderr[-500:]}")
+
+    media_exts = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".mp4", ".mov", ".webm")
+    files = []
+    for root, _dirs, filenames in os.walk(output_dir):
+        for fn in filenames:
+            if fn.lower().endswith(media_exts):
+                files.append(os.path.join(root, fn))
+    files.sort()
+    return files
+
+
 def _download_video_sync(url: str, ydl_opts: dict) -> dict:
     """Bloklaydigan (sinxron) yuklab olish — alohida threadda ishga tushiriladi,
     shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi.
@@ -1438,6 +1467,46 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 shutil.rmtree(img_dir, ignore_errors=True)
             except Exception as ge:
                 log.warning(f"gallery-dl zaxira usuli ham ishlamadi: {ge}")
+            await safe_edit(status, t("generic_error", lang))
+            return
+
+        # Instagram ba'zan bo'sh/noto'g'ri JSON qaytaradi va yt-dlp'ning
+        # o'z extractori uni tushunolmay xato beradi ("Failed to parse
+        # JSON"). Bu holatda gallery-dl'ning mustaqil scraper mexanizmi
+        # orqali (rasm ham, video ham) qayta urinib ko'ramiz — u yt-dlp'dan
+        # butunlay boshqacha ishlagani uchun ko'pincha muvaffaqiyatli bo'ladi.
+        json_error_patterns = ("failed to parse json", "jsondecodeerror", "expecting value")
+        if "instagram.com" in url and any(p in err_text for p in json_error_patterns):
+            try:
+                media_dir = tempfile.mkdtemp()
+                media_paths = await asyncio.to_thread(
+                    _download_media_gallery_dl_sync, url, media_dir
+                )
+                if media_paths:
+                    await safe_edit(status, t("uploading", lang))
+                    video_exts = (".mp4", ".mov", ".webm")
+                    if len(media_paths) == 1:
+                        p = media_paths[0]
+                        if p.lower().endswith(video_exts):
+                            await bot.send_video(chat_id=message.chat.id, video=FSInputFile(p), caption=IMAGE_CAPTION)
+                        else:
+                            await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(p), caption=IMAGE_CAPTION)
+                    else:
+                        media = [
+                            InputMediaVideo(media=FSInputFile(p)) if p.lower().endswith(video_exts)
+                            else InputMediaPhoto(media=FSInputFile(p))
+                            for p in media_paths[:10]
+                        ]
+                        media[0].caption = IMAGE_CAPTION
+                        await bot.send_media_group(chat_id=message.chat.id, media=media)
+                    await status.delete()
+                    for p in media_paths:
+                        os.remove(p)
+                    shutil.rmtree(media_dir, ignore_errors=True)
+                    return
+                shutil.rmtree(media_dir, ignore_errors=True)
+            except Exception as ge:
+                log.warning(f"gallery-dl zaxira usuli (JSON xatosi uchun) ham ishlamadi: {ge}")
             await safe_edit(status, t("generic_error", lang))
             return
 
