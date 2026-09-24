@@ -318,6 +318,7 @@ TEXTS = {
             "yuklab, sizga jo'nataman:\n\n"
             "\U0001F4F8 Instagram (Reels, postlar, rasmlar)\n"
             "\U0001F3B5 TikTok\n"
+            "▶️ YouTube (Shorts va oddiy videolar)\n"
             "\U0001F535 VK\n"
             "\U0001F537 Facebook\n"
             "\u274C Twitter/X\n"
@@ -408,6 +409,7 @@ TEXTS = {
             "скачаю и пришлю вам:\n\n"
             "\U0001F4F8 Instagram (Reels, посты, фото)\n"
             "\U0001F3B5 TikTok\n"
+            "▶️ YouTube (Shorts и обычные видео)\n"
             "\U0001F535 VK\n"
             "\U0001F537 Facebook\n"
             "\u274C Twitter/X\n"
@@ -497,6 +499,7 @@ TEXTS = {
             "and I'll download it for you:\n\n"
             "\U0001F4F8 Instagram (Reels, posts, photos)\n"
             "\U0001F3B5 TikTok\n"
+            "▶️ YouTube (Shorts and regular videos)\n"
             "\U0001F535 VK\n"
             "\U0001F537 Facebook\n"
             "\u274C Twitter/X\n"
@@ -1265,10 +1268,6 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         return
 
     url = message.text.strip()
-
-    if "youtube.com" in url or "youtu.be" in url:
-        await message.answer(t("youtube_unavailable", lang))
-        return
 
     status = await message.answer(t("downloading", lang))
 
