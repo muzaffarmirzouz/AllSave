@@ -342,6 +342,17 @@ async def download_video(url: str, output_path: str) -> bool:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
 
+    # Instagram sessiyasini (bot.py bilan BIR XIL cookie/akkaunt) haddan
+    # tashqari tez-tez so'rovlardan asrash uchun — bot.py'dagi umumiy
+    # cheklovchidan (throttle) foydalanamiz, shunda /caption va oddiy
+    # yuklab olish bitta hisoblagichni baham ko'radi.
+    if "instagram.com" in url:
+        try:
+            from bot import _throttle_instagram
+            await _throttle_instagram()
+        except ImportError:
+            pass
+
     try:
         await asyncio.to_thread(_sync_download)
     except Exception as e:

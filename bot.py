@@ -72,6 +72,32 @@ MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")
 MAX_CONCURRENT_DOWNLOADS = int(os.environ.get("MAX_CONCURRENT_DOWNLOADS", "8"))
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+# Instagram — proxy, yt-dlp versiyasi va cookie barchasi sog'lom bo'lsa ham,
+# bitta cookie/akkaunt sessiyasiga bir vaqtning o'zida ko'p (ketma-ket, tez)
+# so'rov yuborilsa, Instagram buni avtomatlashtirilgan faoliyat deb hisoblab
+# ba'zi so'rovlarga BO'SH javob qaytaradi ("Failed to parse JSON" xatosi shu
+# sababdan chiqadi). Shuning uchun Instagram so'rovlari orasida — nechta
+# foydalanuvchi bir vaqtda so'ragan bo'lishidan qat'i nazar — kamida
+# IG_MIN_INTERVAL_SECONDS soniya oraliq saqlanadi (Railway'da shu nom bilan
+# o'zgaruvchi qo'shib sozlash mumkin).
+IG_MIN_INTERVAL_SECONDS = float(os.environ.get("IG_MIN_INTERVAL_SECONDS", "3"))
+_ig_rate_lock = asyncio.Lock()
+_ig_last_request_ts = 0.0
+
+
+async def _throttle_instagram():
+    """Instagram'ga yuboriladigan so'rovlar orasida minimal vaqt oralig'ini
+    ta'minlaydi (yuklab olishning o'zini emas, faqat so'rov boshlanishini
+    kechiktiradi) — akkaunt sessiyasini haddan tashqari tez-tez so'rovlardan
+    asraydi."""
+    global _ig_last_request_ts
+    async with _ig_rate_lock:
+        now = asyncio.get_event_loop().time()
+        wait = _ig_last_request_ts + IG_MIN_INTERVAL_SECONDS - now
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _ig_last_request_ts = asyncio.get_event_loop().time()
+
 # Doimiy (Railway Volume'dagi) papka — DB_PATH bilan bir xil joyda, shuning
 # uchun qayta deploy/restart'da fayllar YO'QOLMAYDI.
 PERSIST_DIR = os.path.dirname(DB_PATH) or "."
@@ -1367,6 +1393,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         async with download_semaphore:
             if was_queued:
                 await safe_edit(status, t("downloading", lang))
+            if "instagram.com" in url:
+                await _throttle_instagram()
             result = await _download_with_retry(url, ydl_opts)
             downloaded_path = result.get("path")
 
