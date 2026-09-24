@@ -858,10 +858,14 @@ def _download_video_sync(url: str, ydl_opts: dict) -> dict:
         }
 
 
-async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> dict:
+async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 3) -> dict:
     """Vaqtinchalik tarmoq/bloklanish xatolarida bir necha marta qayta urinadi
     (kutish bilan), doimiy xatolarda (masalan noto'g'ri havola) darhol
-    yt_dlp.utils.DownloadError'ni yuqoriga uzatadi."""
+    yt_dlp.utils.DownloadError'ni yuqoriga uzatadi.
+
+    Instagram ba'zan bir zumga bo'sh javob (JSON parse xatosi) qaytaradi —
+    bu odatda vaqtinchalik bo'ladi, shuning uchun urinishlar sonini oshirib
+    va orasidagi kutish vaqtini uzaytirib qo'ydik (3 ta urinish, 4-8-12 soniya)."""
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
@@ -870,7 +874,7 @@ async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 2) -> d
             last_error = e
             if attempt < attempts:
                 log.warning(f"Yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {e}")
-                await asyncio.sleep(2 * attempt)
+                await asyncio.sleep(4 * attempt)
             else:
                 raise
     raise last_error
