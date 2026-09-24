@@ -58,11 +58,23 @@ caption_router = Router(name="caption_mode")
 
 # ---------------------------------------------------------------- sozlamalar
 
-MAX_VIDEO_SECONDS = int(os.getenv("CAPTION_MAX_SECONDS", "180"))  # 3 daqiqa
+MAX_VIDEO_SECONDS = int(os.getenv("CAPTION_MAX_SECONDS", "120"))  # 2 daqiqa
 MAX_FILE_MB = 200
 
 _asr_pipeline = None
 _asr_lock = threading.Lock()
+
+# Bir vaqtning o'zida nechta /caption jobi (ASR + ffmpeg kuydirish) parallel
+# ishlashi mumkinligini cheklaydi. Har bir job og'ir transformers ASR
+# pipeline'ni CPU'da ishlatadi va ffmpeg bilan qayta kodlaydi — cheklovsiz
+# bir nechtasi bir vaqtda ishga tushsa, xotira (RAM) tugab, konteyner
+# "Out of memory" bilan qulashi mumkin (asosiy bot.py'dagi
+# download_semaphore'ga o'xshash himoya, lekin bu yerda alohida — chunki
+# caption jobi ancha ko'proq RAM yeydi).
+CAPTION_MAX_CONCURRENT = int(os.getenv("CAPTION_MAX_CONCURRENT", "1"))
+caption_semaphore = asyncio.Semaphore(CAPTION_MAX_CONCURRENT)
+_active_captions = 0
+_active_captions_lock = threading.Lock()
 
 # Umumiy (generic) Whisper modellari o'zbek tilida juda kam ma'lumot bilan
 # o'qitilgan — shuning uchun maxsus o'zbek tiliga moslashtirilgan model
@@ -110,6 +122,7 @@ CAPTION_TEXTS = {
         "cancelled": "Bekor qilindi.",
         "too_large": "Video juda katta ({max}MB dan oshmasin).",
         "downloading": "⏳ Video yuklab olinmoqda...",
+        "queued": "⏳ Hozir boshqa video qayta ishlanmoqda, navbatingiz keldi — biroz kuting...",
         "download_failed": (
             "❌ Videoni yuklab bo'lmadi. Havola to'g'riligini va postning "
             "ochiq (public) ekanligini tekshiring."
@@ -136,6 +149,7 @@ CAPTION_TEXTS = {
         "cancelled": "Отменено.",
         "too_large": "Видео слишком большое (не более {max}МБ).",
         "downloading": "⏳ Скачиваю видео...",
+        "queued": "⏳ Сейчас обрабатывается другое видео, ваша очередь подошла — подождите немного...",
         "download_failed": (
             "❌ Не удалось скачать видео. Проверьте ссылку и убедитесь, что пост "
             "открытый (public)."
@@ -162,6 +176,7 @@ CAPTION_TEXTS = {
         "cancelled": "Cancelled.",
         "too_large": "The video is too large (must be under {max}MB).",
         "downloading": "⏳ Downloading video...",
+        "queued": "⏳ Another video is being processed right now — your turn is next, please wait a moment...",
         "download_failed": "❌ Couldn't download the video. Check the link and make sure the post is public.",
         "unrecognized": "Send me a video file or a video link, or press /cancel to cancel.",
         "too_long": "❌ The video is too long ({sec}s). Please send a video under {max}s.",
@@ -308,6 +323,14 @@ async def download_video(url: str, output_path: str) -> bool:
     except ImportError:
         pass  # bot.py hali yuklanmagan bo'lsa (masalan test muhitida) — davom etamiz
 
+    # PROXY_URL Railway environment variable orqali sozlansa — barcha
+    # so'rovlar shu proxy orqali o'tadi (masalan Instagram cookie sessiyasi
+    # tezroq eskirib qolmasligi uchun statik rezidensial proxy).
+    # Format: http://user:pass@host:port yoki socks5://user:pass@host:port
+    proxy_url = os.getenv("PROXY_URL")
+    if proxy_url:
+        ydl_opts["proxy"] = proxy_url
+
     if "instagram.com" in url:
         try:
             from yt_dlp.networking.impersonate import ImpersonateTarget
@@ -336,65 +359,81 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         await status.edit_text(ct("too_long", lang, sec=int(duration), max=MAX_VIDEO_SECONDS))
         return
 
-    audio_path = tmp / "audio.wav"
+    # --- Bu yerdan boshlab og'ir qism (ASR + ffmpeg kuydirish + yuborish) ---
+    # Bir vaqtda faqat CAPTION_MAX_CONCURRENT ta job ishlashi uchun semafor
+    # ichiga olinadi (OOM'ning oldini olish uchun). Agar semafor band bo'lsa,
+    # foydalanuvchiga "navbatda" xabari ko'rsatiladi.
+    global _active_captions
+    with _active_captions_lock:
+        will_wait = _active_captions >= CAPTION_MAX_CONCURRENT
+        _active_captions += 1
     try:
-        await run_ffmpeg([
-            "ffmpeg", "-y", "-i", str(src_path),
-            "-ac", "1", "-ar", "16000", str(audio_path),
-        ])
-    except RuntimeError as e:
-        logger.error(f"ffmpeg audio ajratish xatosi: {e}")
-        await status.edit_text(ct("cant_read", lang))
-        return
+        if will_wait:
+            await status.edit_text(ct("queued", lang))
 
-    await status.edit_text(ct("transcribing", lang))
-    pipe = get_asr_pipeline()
-    result = await asyncio.to_thread(
-        pipe,
-        str(audio_path),
-        return_timestamps="word",
-        generate_kwargs={"language": "uzbek", "task": "transcribe"},
-        batch_size=8,
-    )
-    words = result.get("chunks") or []
+        async with caption_semaphore:
+            audio_path = tmp / "audio.wav"
+            try:
+                await run_ffmpeg([
+                    "ffmpeg", "-y", "-i", str(src_path),
+                    "-ac", "1", "-ar", "16000", str(audio_path),
+                ])
+            except RuntimeError as e:
+                logger.error(f"ffmpeg audio ajratish xatosi: {e}")
+                await status.edit_text(ct("cant_read", lang))
+                return
 
-    if not words:
-        await status.edit_text(ct("no_speech", lang))
-        return
+            await status.edit_text(ct("transcribing", lang))
+            pipe = get_asr_pipeline()
+            result = await asyncio.to_thread(
+                pipe,
+                str(audio_path),
+                return_timestamps="word",
+                generate_kwargs={"language": "uzbek", "task": "transcribe"},
+                batch_size=8,
+            )
+            words = result.get("chunks") or []
 
-    srt_path = tmp / "subs.ass"
-    video_width, video_height = await get_video_dimensions(src_path)
-    write_ass(words, srt_path, video_width, video_height)
+            if not words:
+                await status.edit_text(ct("no_speech", lang))
+                return
 
-    await status.edit_text(ct("burning", lang))
-    out_path = tmp / "output.mp4"
+            srt_path = tmp / "subs.ass"
+            video_width, video_height = await get_video_dimensions(src_path)
+            write_ass(words, srt_path, video_width, video_height)
 
-    # Original faylning taxminiy bitrate'ini hisoblaymiz, shunda chiqish
-    # video hajmi asl faylga yaqin bo'ladi (standart CRF rejimi ba'zan
-    # original'dan sezilarli kattaroq fayl berib yuborar edi). ~15%
-    # audio uchun ajratib qo'yamiz (audio -c:a copy bilan o'zgarishsiz
-    # qoladi, shuning uchun umumiy bitrate'dan uning ulushini olib
-    # tashlaymiz).
-    target_kbps = None
-    try:
-        src_size_bytes = src_path.stat().st_size
-        if duration and duration > 0:
-            total_kbps = (src_size_bytes * 8 / 1000) / duration
-            target_kbps = max(500, int(total_kbps * 0.85))
-    except OSError:
-        pass
+            await status.edit_text(ct("burning", lang))
+            out_path = tmp / "output.mp4"
 
-    try:
-        await burn_subtitles(src_path, srt_path, out_path, target_kbps)
-    except RuntimeError as e:
-        logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
-        await status.edit_text(ct("burn_failed", lang))
-        return
+            # Original faylning taxminiy bitrate'ini hisoblaymiz, shunda chiqish
+            # video hajmi asl faylga yaqin bo'ladi (standart CRF rejimi ba'zan
+            # original'dan sezilarli kattaroq fayl berib yuborar edi). ~15%
+            # audio uchun ajratib qo'yamiz (audio -c:a copy bilan o'zgarishsiz
+            # qoladi, shuning uchun umumiy bitrate'dan uning ulushini olib
+            # tashlaymiz).
+            target_kbps = None
+            try:
+                src_size_bytes = src_path.stat().st_size
+                if duration and duration > 0:
+                    total_kbps = (src_size_bytes * 8 / 1000) / duration
+                    target_kbps = max(500, int(total_kbps * 0.85))
+            except OSError:
+                pass
 
-    await status.edit_text(ct("uploading", lang))
-    bot_tag = get_bot_tag()
-    await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang, bot=bot_tag))
-    await status.delete()
+            try:
+                await burn_subtitles(src_path, srt_path, out_path, target_kbps)
+            except RuntimeError as e:
+                logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
+                await status.edit_text(ct("burn_failed", lang))
+                return
+
+            await status.edit_text(ct("uploading", lang))
+            bot_tag = get_bot_tag()
+            await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang, bot=bot_tag))
+            await status.delete()
+    finally:
+        with _active_captions_lock:
+            _active_captions -= 1
 
 
 async def get_duration(path: Path) -> Optional[float]:

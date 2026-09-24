@@ -121,6 +121,15 @@ if not YT_COOKIES_FILE:
 # "http://bgutil-pot-provider.railway.internal:4416"
 POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 
+# Ixtiyoriy proxy — sozlansa, barcha yt-dlp so'rovlari (video yuklab olish,
+# Instagram/YouTube bilan bog'lanish) shu proxy orqali o'tadi. Bu Instagram
+# cookie sessiyasining tezroq eskirib qolishining oldini olish uchun foydali
+# (statik rezidensial/ISP proxy Instagram'ga "oddiy uy interneti"dek
+# ko'rinadi, Railway'ning datacenter IP'sidan farqli). Format:
+# "http://user:pass@host:port" yoki "socks5://user:pass@host:port".
+# Bo'sh qoldirilsa (standart), hech narsa o'zgarmaydi.
+PROXY_URL = os.environ.get("PROXY_URL", "").strip()
+
 # Video'larga pastki-markazga qo'yiladigan animatsion GIF logo (watermark).
 # LOGO_PATH — doimiy (Railway Volume'dagi) fayl manzili, DB_PATH bilan bir xil
 # papkada saqlanadi, shuning uchun qayta deploy/restart'da HAM YO'QOLMAYDI.
@@ -1298,6 +1307,12 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         ydl_opts["cookiefile"] = IG_COOKIES_FILE
     if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
         ydl_opts["cookiefile"] = YT_COOKIES_FILE
+    # PROXY_URL Railway environment variable orqali sozlansa — barcha
+    # so'rovlar shu proxy orqali o'tadi (masalan Instagram cookie sessiyasi
+    # tezroq eskirib qolmasligi uchun statik rezidensial/ISP proxy).
+    # Format: http://user:pass@host:port yoki socks5://user:pass@host:port
+    if PROXY_URL:
+        ydl_opts["proxy"] = PROXY_URL
     if POT_PROVIDER_URL and ("youtube.com" in url or "youtu.be" in url):
         # yt-dlp'ning o'zi mos client'ni tanlashiga ruxsat beramiz — faqat
         # POT provider manzilini beramiz, majburlab client tanlamaymiz.
