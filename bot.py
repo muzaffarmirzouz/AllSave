@@ -1566,6 +1566,11 @@ async def main():
         except Exception as e:
             log.warning(f"Admin ({owner_id}) uchun buyruqlar menyusini sozlashda xato: {e}")
 
+    try:
+        log.info(f"yt-dlp versiyasi: {yt_dlp.version.__version__}")
+    except Exception as e:
+        log.warning(f"yt-dlp versiyasini aniqlab bo'lmadi: {e}")
+
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
