@@ -45,6 +45,15 @@ class WatermarkStates(StatesGroup):
     # tozalanadi (caption rejimi bilan bir xil, izchil xatti-harakat uchun).
     waiting_video = State()
 
+
+class OutroStates(StatesGroup):
+    # "Videoga Outro qo'shish" tugmasi bosilgandan keyin — foydalanuvchi
+    # yuborgan HAR BIR link (video yuklab olinganda) oxiriga saqlangan
+    # qisqa outro video avtomatik ulanadi. /start bosilguncha davom etadi
+    # (Logo rejimi bilan bir xil xatti-harakat, lekin BIR VAQTNING o'zida
+    # faqat bittasi — logo yoki outro — faol bo'lishi mumkin).
+    waiting_video = State()
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 # Faqat /stats buyrug'ini ko'ra oladigan shaxslar (vergul bilan ID kiriting).
@@ -191,6 +200,20 @@ def _find_user_logo(user_id: int) -> str:
     return None
 
 
+# Har bir yuklab olingan videoning OXIRIGA ulanadigan qisqa (odatda 5-6
+# soniyalik) shaxsiy "outro" video — logo bilan bir xil doimiy (Railway
+# Volume'dagi) joyda saqlanadi, shuning uchun qayta deploy/restart'da
+# YO'QOLMAYDI. Botga to'g'ridan-to'g'ri /setoutro orqali yangi video
+# yuborib, uni istalgan vaqt almashtirish mumkin.
+USER_OUTROS_DIR = os.path.join(LOGO_DIR, "outros")
+
+
+def _find_user_outro(user_id: int) -> str:
+    """Ma'lum bir foydalanuvchining SHAXSIY outro videosini qidiradi."""
+    p = os.path.join(USER_OUTROS_DIR, str(user_id), "outro.mp4")
+    return p if os.path.exists(p) else None
+
+
 LOGO_GIF_FILE = _find_existing_logo()  # bot egasining standart logotipi
 
 # LOGO_GIF_B64 — ixtiyoriy, FAQAT birinchi marta (hali hech qanday logo
@@ -260,13 +283,16 @@ def db():
             username TEXT,
             first_seen TEXT,
             lang TEXT,
-            logo_position TEXT
+            logo_position TEXT,
+            logo_enabled INTEGER,
+            outro_enabled INTEGER
         )
     """)
     # Eski bazalarda ba'zi ustunlar bo'lmasligi mumkin — xavfsiz qo'shamiz.
-    for col in ("lang", "logo_position"):
+    for col in ("lang", "logo_position", "logo_enabled", "outro_enabled"):
         try:
-            conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+            col_type = "TEXT" if col in ("lang", "logo_position") else "INTEGER"
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
             conn.commit()
         except sqlite3.OperationalError:
             pass  # ustun allaqachon bor
@@ -309,6 +335,40 @@ def get_user_logo_position(user_id: int) -> str:
 def set_user_logo_position(user_id: int, position: str):
     conn = db()
     conn.execute("UPDATE users SET logo_position = ? WHERE user_id = ?", (position, user_id))
+    conn.commit()
+    conn.close()
+
+
+# Logo va Outro rejimlari endi BIR-BIRIGA BOG'LIQ EMAS, mustaqil yoqiladigan
+# doimiy sozlamalar (bazada saqlanadi) — xohlagan foydalanuvchi faqat
+# bittasini, xohlagan ikkovini birdan yoqib qo'yishi mumkin. Ular
+# ATAYLAB /start bilan o'chmaydi (faqat /logooff, /outrooff yoki mos
+# "o'chirish" tugmasi orqali) — bu haqiqiy, doimiy sozlama bo'lishi uchun.
+
+def get_user_logo_enabled(user_id: int) -> bool:
+    conn = db()
+    row = conn.execute("SELECT logo_enabled FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return bool(row and row[0])
+
+
+def set_user_logo_enabled(user_id: int, enabled: bool):
+    conn = db()
+    conn.execute("UPDATE users SET logo_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_user_outro_enabled(user_id: int) -> bool:
+    conn = db()
+    row = conn.execute("SELECT outro_enabled FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return bool(row and row[0])
+
+
+def set_user_outro_enabled(user_id: int, enabled: bool):
+    conn = db()
+    conn.execute("UPDATE users SET outro_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
     conn.commit()
     conn.close()
 
@@ -417,7 +477,7 @@ TEXTS = {
             "Endi bemalol videolarni o'z logoyingiz bilan yuklab olishingiz "
             "mumkin \u2014 menga yuboradigan HAR BIR video (fayl yoki havola) "
             "shu logo bilan avtomatik qaytadi.\n\n"
-            "Oddiy (logosiz) rejimga qaytish uchun /start bosing."
+            "Logoni o'chirish uchun /logooff bosing."
         ),
         "logo_save_error": "\u274C Logo saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
         "logo_removed": "\u2705 Shaxsiy logo o'chirildi. Endi videolar logosiz qaytadi.",
@@ -427,8 +487,35 @@ TEXTS = {
             "Endi bemalol videolarni o'z logoyingiz bilan yuklab olishingiz "
             "mumkin \u2014 menga yuboradigan HAR BIR video (fayl yoki havola) "
             "shaxsiy logotipingiz bilan avtomatik qaytadi.\n\n"
-            "Oddiy (logosiz) rejimga qaytish uchun /start bosing."
+            "Logoni o'chirish uchun /logooff bosing."
         ),
+        "setoutro_prompt": (
+            "\U0001F3AC Video HAVOLASINING OXIRIGA avtomatik ulanadigan "
+            "qisqa (masalan 5-6 soniyalik) outro videongizni hozir menga "
+            "yuboring (oddiy video sifatida).\n\n"
+            "\u26A0\uFE0F Eski outro'ngiz shu yangisi bilan avtomatik "
+            "almashtiriladi."
+        ),
+        "outro_exists_choice": "\U0001F3AC Sizda allaqachon shaxsiy outro bor. Nima qilmoqchisiz?",
+        "btn_outro_continue": "\u2705 Shu outro bilan davom etish",
+        "btn_outro_replace": "\U0001F504 Yangi outro yuklash",
+        "btn_outro_off": "\U0001F6AB Outro'ni o'chirish",
+        "outro_saved": (
+            "\u2705 <b>Outro muvaffaqiyatli o'rnatildi va rejim yoqildi!</b>\n\n"
+            "Endi menga yuboradigan HAR BIR video HAVOLASI oxiriga shu outro "
+            "avtomatik ulanib qaytadi.\n\n"
+            "Outro'ni o'chirish uchun /outrooff bosing."
+        ),
+        "outro_save_error": "\u274C Outro saqlashda xatolik yuz berdi, qayta urinib ko'ring.",
+        "outro_removed": "\u2705 Shaxsiy outro o'chirildi. Endi videolar outrosiz qaytadi.",
+        "no_outro_to_remove": "\U0001F4A1 Sizda hozir o'chiriladigan outro yo'q.",
+        "send_link_for_outro": (
+            "\u2705 <b>Outro rejimi yoqildi!</b>\n\n"
+            "Endi menga yuboradigan HAR BIR video HAVOLASI oxiriga shu outro "
+            "avtomatik ulanib qaytadi.\n\n"
+            "Outro'ni o'chirish uchun /outrooff bosing."
+        ),
+        "outro_not_video": "\u274C Iltimos, OUTRO sifatida oddiy video (fayl emas, GIF emas) yuboring.",
     },
     "ru": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -511,7 +598,7 @@ TEXTS = {
             "Теперь можете свободно скачивать видео со своим логотипом \u2014 "
             "КАЖДОЕ видео (файл или ссылка), которое вы мне отправите, будет "
             "автоматически возвращаться с этим логотипом.\n\n"
-            "Чтобы вернуться в обычный (без логотипа) режим, нажмите /start."
+            "Чтобы удалить логотип, нажмите /logooff."
         ),
         "logo_save_error": "\u274C Ошибка при сохранении логотипа, попробуйте ещё раз.",
         "logo_removed": "\u2705 Личный логотип удалён. Теперь видео будут без логотипа.",
@@ -521,8 +608,34 @@ TEXTS = {
             "Теперь можете свободно скачивать видео со своим логотипом \u2014 "
             "КАЖДОЕ видео (файл или ссылка), которое вы мне отправите, будет "
             "автоматически возвращаться с вашим личным логотипом.\n\n"
-            "Чтобы вернуться в обычный режим (без логотипа), нажмите /start."
+            "Чтобы удалить логотип, нажмите /logooff."
         ),
+        "setoutro_prompt": (
+            "\U0001F3AC Пришлите мне сейчас короткое (например 5-6 секунд) "
+            "outro-видео, которое будет автоматически добавляться в КОНЕЦ "
+            "каждого скачанного по ссылке видео (обычным видео-файлом).\n\n"
+            "\u26A0\uFE0F Ваш старый outro будет автоматически заменён новым."
+        ),
+        "outro_exists_choice": "\U0001F3AC У вас уже есть личный outro. Что хотите сделать?",
+        "btn_outro_continue": "\u2705 Продолжить с этим outro",
+        "btn_outro_replace": "\U0001F504 Загрузить новый outro",
+        "btn_outro_off": "\U0001F6AB Удалить outro",
+        "outro_saved": (
+            "\u2705 <b>Outro успешно сохранён, режим включён!</b>\n\n"
+            "Теперь КАЖДАЯ ссылка на видео, которую вы мне отправите, будет "
+            "возвращаться с этим outro в конце.\n\n"
+            "Чтобы удалить outro, нажмите /outrooff."
+        ),
+        "outro_save_error": "\u274C Ошибка при сохранении outro, попробуйте ещё раз.",
+        "outro_removed": "\u2705 Личный outro удалён. Теперь видео будут без outro.",
+        "no_outro_to_remove": "\U0001F4A1 У вас сейчас нет outro для удаления.",
+        "send_link_for_outro": (
+            "\u2705 <b>Режим outro включён!</b>\n\n"
+            "Теперь КАЖДАЯ ссылка на видео, которую вы мне отправите, будет "
+            "возвращаться с этим outro в конце.\n\n"
+            "Чтобы удалить outro, нажмите /outrooff."
+        ),
+        "outro_not_video": "\u274C Пожалуйста, пришлите OUTRO обычным видео (не файлом, не GIF).",
     },
     "en": {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
@@ -614,8 +727,34 @@ TEXTS = {
             "You can now freely download videos with your own logo \u2014 "
             "EVERY video (file or link) you send me will automatically come "
             "back with your personal logo.\n\n"
-            "To return to plain mode (no logo), press /start."
+            "To remove the logo, use /logooff."
         ),
+        "setoutro_prompt": (
+            "\U0001F3AC Send me your short (e.g. 5-6 second) outro video now \u2014 "
+            "it will be automatically appended to the END of every video you "
+            "download by link (send it as a regular video).\n\n"
+            "\u26A0\uFE0F Your old outro will be automatically replaced by this new one."
+        ),
+        "outro_exists_choice": "\U0001F3AC You already have a personal outro. What would you like to do?",
+        "btn_outro_continue": "\u2705 Continue with this outro",
+        "btn_outro_replace": "\U0001F504 Upload a new outro",
+        "btn_outro_off": "\U0001F6AB Remove outro",
+        "outro_saved": (
+            "\u2705 <b>Outro saved and mode is on!</b>\n\n"
+            "Now EVERY video link you send me will come back with this outro "
+            "appended at the end.\n\n"
+            "To remove the outro, use /outrooff."
+        ),
+        "outro_save_error": "\u274C Something went wrong saving the outro, please try again.",
+        "outro_removed": "\u2705 Personal outro removed. Videos will now come back without an outro.",
+        "no_outro_to_remove": "\U0001F4A1 You don't have an outro set up to remove right now.",
+        "send_link_for_outro": (
+            "\u2705 <b>Outro mode is on!</b>\n\n"
+            "Now EVERY video link you send me will come back with this outro "
+            "appended at the end.\n\n"
+            "To remove the outro, use /outrooff."
+        ),
+        "outro_not_video": "\u274C Please send the OUTRO as a regular video (not a file, not a GIF).",
     },
 }
 
@@ -641,9 +780,9 @@ def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
 
 
 MAIN_MENU_LABELS = {
-    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "caption": "\U0001F4DD Videoga Text qo'yish", "lang": "\U0001F310 Til"},
-    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "caption": "\U0001F4DD Добавить текст на видео", "lang": "\U0001F310 Язык"},
-    "en": {"logo": "\U0001F3A8 Add logo to video", "caption": "\U0001F4DD Add text to video", "lang": "\U0001F310 Language"},
+    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "lang": "\U0001F310 Til"},
+    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "lang": "\U0001F310 Язык"},
+    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "lang": "\U0001F310 Language"},
 }
 
 
@@ -651,6 +790,7 @@ def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
     labels = MAIN_MENU_LABELS.get(lang, MAIN_MENU_LABELS["uz"])
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=labels["logo"], callback_data="start_setlogo")],
+        [InlineKeyboardButton(text=labels["outro"], callback_data="start_setoutro")],
         [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
         [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
     ])
@@ -664,6 +804,16 @@ def logo_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t("btn_logo_continue", lang), callback_data="logo_continue")],
         [InlineKeyboardButton(text=t("btn_logo_replace", lang), callback_data="logo_replace")],
         [InlineKeyboardButton(text=t("btn_logo_off", lang), callback_data="logo_off")],
+    ])
+
+
+def outro_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Foydalanuvchida allaqachon shaxsiy outro bo'lganda ko'rsatiladi —
+    logo_choice_keyboard bilan bir xil mantiq, outro uchun."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_outro_continue", lang), callback_data="outro_continue")],
+        [InlineKeyboardButton(text=t("btn_outro_replace", lang), callback_data="outro_replace")],
+        [InlineKeyboardButton(text=t("btn_outro_off", lang), callback_data="outro_off")],
     ])
 
 
@@ -829,9 +979,14 @@ def logo_active_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "logo_continue")
 async def cb_logo_continue(callback: CallbackQuery, state: FSMContext):
-    """Mavjud logo bilan davom etish tanlandi — logo rejimini yoqadi."""
+    """Mavjud logo bilan davom etish tanlandi — logo rejimini yoqadi.
+    MUHIM: bu endi Outro rejimidan MUSTAQIL (bazada alohida saqlanadi) —
+    ikkalasini istagan kombinatsiyada birga yoqib qo'yish mumkin. FSM
+    holati ham (eskisidek) qo'yiladi — bu faqat "video FAYL to'g'ridan-
+    to'g'ri yuborilganda" logo qo'llash uchun kerak."""
     lang = get_user_lang(callback.from_user.id) or "uz"
     await callback.answer()
+    set_user_logo_enabled(callback.from_user.id, True)
     await state.set_state(WatermarkStates.waiting_video)
     await callback.message.answer(
         t("send_video_for_logo", lang), parse_mode="HTML", reply_markup=logo_active_keyboard(lang)
@@ -846,6 +1001,51 @@ async def cb_logo_replace(callback: CallbackQuery):
     await callback.answer()
     _awaiting_logo_from.add(callback.from_user.id)
     await callback.message.answer(t("setlogo_prompt", lang))
+
+
+@router.callback_query(F.data == "start_setoutro")
+async def cb_start_setoutro(callback: CallbackQuery, state: FSMContext):
+    """Asosiy menyudagi '🎬 Videoga Outro qo'shish' tugmasi — logo bilan
+    bir xil mantiq (mavjud outro bilan davom etish / almashtirish /
+    hali sozlanmagan bo'lsa to'g'ridan-to'g'ri so'rash)."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    if _find_user_outro(callback.from_user.id):
+        await callback.message.answer(t("outro_exists_choice", lang), reply_markup=outro_choice_keyboard(lang))
+    else:
+        _awaiting_outro_from.add(callback.from_user.id)
+        await callback.message.answer(t("setoutro_prompt", lang))
+
+
+def outro_active_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Outro rejimi FAOL bo'lgan paytda ko'rsatiladi — tez o'chirish
+    imkoniyati uchun."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t("btn_outro_off", lang), callback_data="outro_off")],
+    ])
+
+
+@router.callback_query(F.data == "outro_continue")
+async def cb_outro_continue(callback: CallbackQuery, state: FSMContext):
+    """Mavjud outro bilan davom etish tanlandi — outro rejimini yoqadi.
+    MUSTAQIL: Logo rejimidan qat'i nazar ishlaydi — ikkalasi birga ham
+    yoqilgan bo'lishi mumkin."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    set_user_outro_enabled(callback.from_user.id, True)
+    await callback.message.answer(
+        t("send_link_for_outro", lang), parse_mode="HTML", reply_markup=outro_active_keyboard(lang)
+    )
+
+
+@router.callback_query(F.data == "outro_replace")
+async def cb_outro_replace(callback: CallbackQuery):
+    """Yangi outro yuklash tanlandi — eskisi keyingi video yuborilganda
+    avtomatik almashtiriladi (handle_outro_upload'da)."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    _awaiting_outro_from.add(callback.from_user.id)
+    await callback.message.answer(t("setoutro_prompt", lang))
 
 
 @router.callback_query(F.data == "start_til")
@@ -1036,9 +1236,45 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         raise RuntimeError(f"ffmpeg xato: {result.stderr[-500:]}")
 
 
+def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> None:
+    """FFmpeg orqali asosiy videoning OXIRIGA outro videoni ulaydi.
+    Outro avval asosiy videoning o'lchamiga (scale2ref) moslashtiriladi
+    (ikkalasi turli o'lcham/nisbatda bo'lsa ham), audio formatlari ham
+    bir xillashtiriladi, so'ng ikkalasi 'concat' filtri orqali
+    birlashtiriladi. Bloklaydigan (sinxron) funksiya — alohida threadda
+    ishga tushiriladi."""
+    import subprocess
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-i", outro_file,
+        "-filter_complex",
+        # Outro'ni asosiy videoning aynan o'lchamiga moslashtiramiz.
+        "[1:v][0:v]scale2ref=w=iw:h=ih[outro_v][main_v];"
+        "[main_v]setsar=1,fps=30[main_v2];"
+        "[outro_v]setsar=1,fps=30[outro_v2];"
+        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[main_a];"
+        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[outro_a];"
+        "[main_v2][main_a][outro_v2][outro_a]concat=n=2:v=1:a=1[outv][outa]",
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg xato (outro): {result.stderr[-500:]}")
+
+
 # Kim /setlogo buyrug'ini yuborib, hozir yangi logo GIF yuborishini kutayotganini
 # saqlaydi (bitta oddiy to'plam — alohida FSM kutubxonasi shart emas).
 _awaiting_logo_from: set = set()
+
+# Xuddi shunday — kim /setoutro yuborib, hozir yangi outro VIDEO yuborishini
+# kutayotganini saqlaydi.
+_awaiting_outro_from: set = set()
 
 # Kim /setcookies_ig yoki /setcookies_yt yuborib, hozir yangi cookies.txt
 # yuborishini kutayotganini saqlaydi. Qiymati "ig" yoki "yt".
@@ -1106,8 +1342,10 @@ async def _remove_user_logo(user_id: int) -> bool:
 async def _do_logooff(user_id: int, lang: str) -> str:
     """Logoni o'chiradi va foydalanuvchiga ko'rsatiladigan matnni qaytaradi
     (/logooff buyrug'i va '🚫 Logoni o'chirish' tugmasi ikkalasi ham shuni
-    ishlatadi)."""
+    ishlatadi). Outro rejimiga (agar yoqilgan bo'lsa) TEGMAYDI — ikkalasi
+    mustaqil."""
     removed = await _remove_user_logo(user_id)
+    set_user_logo_enabled(user_id, False)
     return t("logo_removed" if removed else "no_logo_to_remove", lang)
 
 
@@ -1129,6 +1367,59 @@ async def cb_logo_off(callback: CallbackQuery, state: FSMContext):
     text = await _do_logooff(callback.from_user.id, lang)
     await state.clear()
     await callback.message.answer(text)
+
+
+async def _remove_user_outro(user_id: int) -> bool:
+    """Foydalanuvchining shaxsiy outro videosini o'chiradi. Biror narsa
+    o'chirilgan bo'lsa True qaytaradi."""
+    p = os.path.join(USER_OUTROS_DIR, str(user_id), "outro.mp4")
+    if os.path.exists(p):
+        os.remove(p)
+        return True
+    return False
+
+
+async def _do_outrooff(user_id: int, lang: str) -> str:
+    """Outro'ni o'chiradi va foydalanuvchiga ko'rsatiladigan matnni
+    qaytaradi (/outrooff buyrug'i va '🚫 Outro'ni o'chirish' tugmasi
+    ikkalasi ham shuni ishlatadi). Logo rejimiga (agar yoqilgan bo'lsa)
+    TEGMAYDI — ikkalasi mustaqil."""
+    removed = await _remove_user_outro(user_id)
+    set_user_outro_enabled(user_id, False)
+    return t("outro_removed" if removed else "no_outro_to_remove", lang)
+
+
+@router.message(F.text == "/outrooff")
+async def cmd_outrooff(message: Message, state: FSMContext):
+    """Foydalanuvchining shaxsiy outro videosini bitta oddiy buyruq bilan
+    o'chiradi."""
+    lang = get_user_lang(message.from_user.id) or "uz"
+    text = await _do_outrooff(message.from_user.id, lang)
+    await state.clear()
+    await message.answer(text)
+
+
+@router.callback_query(F.data == "outro_off")
+async def cb_outro_off(callback: CallbackQuery, state: FSMContext):
+    """Outro bo'limidagi '🚫 Outro'ni o'chirish' tugmasi — /outrooff bilan bir xil."""
+    lang = get_user_lang(callback.from_user.id) or "uz"
+    await callback.answer()
+    text = await _do_outrooff(callback.from_user.id, lang)
+    await state.clear()
+    await callback.message.answer(text)
+
+
+@router.message(F.text == "/setoutro")
+async def cmd_setoutro(message: Message):
+    """Agar shaxsiy outro allaqachon bor bo'lsa — davom etish yoki
+    almashtirish o'rtasida tanlov beradi; bo'lmasa, yangi outro sozlashni
+    so'raydi."""
+    lang = get_user_lang(message.from_user.id) or "uz"
+    if _find_user_outro(message.from_user.id):
+        await message.answer(t("outro_exists_choice", lang), reply_markup=outro_choice_keyboard(lang))
+    else:
+        _awaiting_outro_from.add(message.from_user.id)
+        await message.answer(t("setoutro_prompt", lang))
 
 
 @router.message(F.text == "/setlogo")
@@ -1213,6 +1504,14 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
         await _handle_cookies_upload(message, bot, cookies_kind)
         return
 
+    # Outro kutilayotgan bo'lsa-yu, foydalanuvchi VIDEO o'rniga GIF/hujjat/
+    # stiker yuborsa — buni tushunarli aytamiz (outro FAQAT oddiy video
+    # bo'lishi kerak, handle_outro_upload buni F.video orqali kutadi).
+    if message.from_user.id in _awaiting_outro_from:
+        lang = get_user_lang(message.from_user.id) or "uz"
+        await message.answer(t("outro_not_video", lang))
+        return
+
     # Logo — endi HAR KIM o'zi uchun sozlashi mumkin.
     if message.from_user.id not in _awaiting_logo_from:
         return
@@ -1262,11 +1561,37 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
                 os.remove(old_path)
         await message.answer(t("logo_saved", lang), parse_mode="HTML", reply_markup=logo_active_keyboard(lang))
         # Logo yangi sozlandi — darhol KEYINGI video shu logo bilan qaytishi
-        # uchun, qayta tugma bosmasdan, video kutish holatiga o'tkazamiz.
+        # uchun, qayta tugma bosmasdan, rejimni yoqamiz (Outro'dan mustaqil).
+        set_user_logo_enabled(message.from_user.id, True)
         await state.set_state(WatermarkStates.waiting_video)
     except Exception as e:
         log.error(f"Logo saqlashda xato: {e}")
         await message.answer(t("logo_save_error", lang))
+
+
+@router.message(F.video, lambda message: message.from_user.id in _awaiting_outro_from)
+async def handle_outro_upload(message: Message, bot: Bot, state: FSMContext):
+    """/setoutro (yoki menyudagi tugma) bosilgandan keyin yuborilgan
+    VIDEO faylni shaxsiy outro sifatida doimiy joyga saqlaydi. MUHIM: bu
+    handler pastdagi 'handle_owner_video'dan OLDIN ro'yxatdan o'tkazilgan
+    — shunda outro kutilayotgan foydalanuvchining videosi noto'g'ri
+    ravishda "logo qo'yiladigan video" sifatida ishlov olmaydi."""
+    lang = get_user_lang(message.from_user.id) or "uz"
+    _awaiting_outro_from.discard(message.from_user.id)
+    user_dir = os.path.join(USER_OUTROS_DIR, str(message.from_user.id))
+    new_path = os.path.join(user_dir, "outro.mp4")
+    try:
+        file_info = await bot.get_file(message.video.file_id)
+        os.makedirs(user_dir, exist_ok=True)
+        await bot.download_file(file_info.file_path, destination=new_path)
+        await message.answer(t("outro_saved", lang), parse_mode="HTML", reply_markup=outro_active_keyboard(lang))
+        # Outro yangi sozlandi — darhol KEYINGI video HAVOLASI shu outro
+        # bilan qaytishi uchun, qayta tugma bosmasdan, rejimni yoqamiz
+        # (Logo'dan mustaqil — bazada saqlanadi).
+        set_user_outro_enabled(message.from_user.id, True)
+    except Exception as e:
+        log.error(f"Outro saqlashda xato: {e}")
+        await message.answer(t("outro_save_error", lang))
 
 
 @router.message(WatermarkStates.waiting_video, F.video)
@@ -1478,13 +1803,15 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             await status.delete()
             return
 
-        # Agar foydalanuvchi "Videoga Logo qo'yish" rejimida bo'lsa (va
-        # shaxsiy logotipi sozlangan bo'lsa), havola orqali yuklangan
-        # videoga ham shuni qo'yamiz. MUHIM: bu ATAYLAB WatermarkStates
-        # holatiga bog'langan — /start bosilgach avtomatik o'chadi, aks
-        # holda logo har doim (rejimdan tashqarida ham) qo'yilib qolar edi.
-        current_state = await state.get_state()
-        user_logo = _find_user_logo(message.from_user.id) if current_state == WatermarkStates.waiting_video.state else None
+        # Logo va Outro — endi BIR-BIRIDAN MUSTAQIL, bazada saqlangan
+        # doimiy sozlamalar (FSM holatiga bog'liq emas). Xohlagan
+        # foydalanuvchi faqat bittasini, xohlagan ikkovini BIRDAN yoqib
+        # qo'yishi mumkin — ikkalasi ham yoqilgan bo'lsa, avval logo
+        # (watermark) qo'yiladi, so'ng natijaning OXIRIGA outro ulanadi.
+        user_logo = _find_user_logo(message.from_user.id) if get_user_logo_enabled(message.from_user.id) else None
+        user_outro = _find_user_outro(message.from_user.id) if get_user_outro_enabled(message.from_user.id) else None
+        applied_something = False
+
         if user_logo:
             wm_output = downloaded_path.rsplit(".", 1)[0] + "_wm.mp4"
             try:
@@ -1494,23 +1821,40 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 )
                 os.remove(downloaded_path)
                 downloaded_path = wm_output
+                applied_something = True
             except Exception as e:
                 log.warning(f"Havola-yuklashda shaxsiy logo qo'yishda xato (logosiz yuboriladi): {e}")
-                # Logo qo'yilmadi — kodek hamon mos emasligi mumkin, tekshiramiz.
-                downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
-        else:
-            # Logo yo'q — TEZLIK uchun: agar yt-dlp'ning o'zi allaqachon
-            # H.264 (avc1) formatni tanlagan bo'lsa (bizning "format"
-            # sozlamamiz buni afzal ko'radi), bu ma'lumot yt-dlp'dan
-            # olingan (ffprobe subprocess'ini QAYTA ishga tushirmasdan) —
-            # kodek allaqachon mos ekani ma'lum, shuning uchun tekshiruvni
-            # butunlay o'tkazib yuboramiz. Faqat noaniq/boshqa kodek
-            # bo'lgandagina ffprobe orqali tekshirib, kerak bo'lsa tuzatamiz.
+
+        if user_outro:
+            outro_output = downloaded_path.rsplit(".", 1)[0] + "_outro.mp4"
+            try:
+                await asyncio.to_thread(
+                    _append_outro_sync, downloaded_path, outro_output, user_outro
+                )
+                os.remove(downloaded_path)
+                downloaded_path = outro_output
+                applied_something = True
+            except Exception as e:
+                log.warning(f"Outro qo'shishda xato (outrosiz yuboriladi): {e}")
+
+        if not applied_something:
+            # Logo ham, outro ham qo'llanmadi — TEZLIK uchun: agar
+            # yt-dlp'ning o'zi allaqachon H.264 (avc1) formatni tanlagan
+            # bo'lsa (bizning "format" sozlamamiz buni afzal ko'radi), bu
+            # ma'lumot yt-dlp'dan olingan (ffprobe subprocess'ini QAYTA
+            # ishga tushirmasdan) — kodek allaqachon mos ekani ma'lum,
+            # shuning uchun tekshiruvni butunlay o'tkazib yuboramiz. Faqat
+            # noaniq/boshqa kodek bo'lgandagina ffprobe orqali tekshirib,
+            # kerak bo'lsa tuzatamiz.
             vcodec = (result.get("vcodec") or "").lower()
             if vcodec.startswith("avc1") or vcodec.startswith("h264"):
                 pass  # allaqachon mos — hech narsa qilinmaydi (tezroq)
             else:
                 downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
+        else:
+            # Logo yoki outro qo'llanganida ffmpeg allaqachon libx264'ga
+            # qayta kodlagan — qo'shimcha moslik tekshiruvi shart emas.
+            pass
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
@@ -1649,6 +1993,8 @@ async def main():
         BotCommand(command="start", description="Botni ishga tushirish / yordam"),
         BotCommand(command="setlogo", description="Watermark uchun yangi GIF logo o'rnatish"),
         BotCommand(command="logooff", description="Shaxsiy logoni o'chirish"),
+        BotCommand(command="setoutro", description="Video oxiriga ulanadigan outro o'rnatish"),
+        BotCommand(command="outrooff", description="Shaxsiy outro'ni o'chirish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
         BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
     ]
