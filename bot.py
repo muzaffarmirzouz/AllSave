@@ -380,6 +380,10 @@ TEXTS = {
             "\u274C Bu kontentni yuklab bo'lmadi \u2014 Instagram bunday havolalar uchun "
             "\"tizimga kirgan\" holatni talab qiladi. Agar bu takrorlansa, bot egasiga xabar bering."
         ),
+        "private_account": (
+            "\U0001F512 Bu profil yopiq (private) \u2014 shu sababli undagi video/rasmni yuklab bo'lmaydi. "
+            "Faqat o'sha akkauntga obuna bo'lganlargina uni ko'ra oladi."
+        ),
         "generic_error": "\u274C Videoni yuklab bo'lmadi. Havola noto'g'ri, video o'chirilgan yoki maxfiy bo'lishi mumkin.",
         "unexpected_error": "\u274C Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
         "no_personal_logo": (
@@ -471,6 +475,10 @@ TEXTS = {
             "\u274C Не удалось скачать этот контент \u2014 Instagram требует "
             "\"авторизации\" для таких ссылок. Если это повторяется, сообщите владельцу бота."
         ),
+        "private_account": (
+            "\U0001F512 Этот профиль закрытый (приватный) \u2014 поэтому видео/фото скачать нельзя. "
+            "Увидеть его могут только подписчики этого аккаунта."
+        ),
         "generic_error": "\u274C Не удалось скачать видео. Ссылка неверна, видео удалено или приватно.",
         "unexpected_error": "\u274C Произошла ошибка, попробуйте ещё раз чуть позже.",
         "no_personal_logo": (
@@ -560,6 +568,10 @@ TEXTS = {
         "login_required": (
             "\u274C Couldn't download this content \u2014 Instagram requires a "
             "\"logged in\" session for such links. If this keeps happening, contact the bot owner."
+        ),
+        "private_account": (
+            "\U0001F512 This profile is private \u2014 so its video/photo can't be downloaded. "
+            "Only that account's followers can see it."
         ),
         "generic_error": "\u274C Couldn't download the video. The link may be wrong, or the video deleted/private.",
         "unexpected_error": "\u274C Something went wrong, please try again in a moment.",
@@ -905,11 +917,18 @@ def _download_video_sync(url: str, ydl_opts: dict) -> dict:
     Video fayli bilan birga asl izohini (caption/description) ham qaytaradi."""
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
+        # yt-dlp qaysi video kodekni tanlaganini ("format" sozlamamiz
+        # avc1/H.264'ni afzal ko'rsa ham, topilmasa boshqasiga o'tishi
+        # mumkin) qaytaramiz — shunda keyinchalik ffprobe orqali QAYTA
+        # tekshirmasdan, shu yerdan bilib, tezlik uchun keraksiz
+        # tekshiruvni o'tkazib yuborish mumkin.
+        vcodec = (info.get("vcodec") or "").lower()
         return {
             "path": ydl.prepare_filename(info),
             "title": (info.get("title") or "").strip(),
             "description": (info.get("description") or "").strip(),
             "uploader": (info.get("uploader") or info.get("uploader_id") or "").strip(),
+            "vcodec": vcodec,
         }
 
 
@@ -1480,9 +1499,18 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 # Logo qo'yilmadi — kodek hamon mos emasligi mumkin, tekshiramiz.
                 downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
         else:
-            # Logo yo'q — faqat kodek Telegram bilan mosligini tekshirib,
-            # kerak bo'lsagina (tezlik uchun) tuzatamiz.
-            downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
+            # Logo yo'q — TEZLIK uchun: agar yt-dlp'ning o'zi allaqachon
+            # H.264 (avc1) formatni tanlagan bo'lsa (bizning "format"
+            # sozlamamiz buni afzal ko'radi), bu ma'lumot yt-dlp'dan
+            # olingan (ffprobe subprocess'ini QAYTA ishga tushirmasdan) —
+            # kodek allaqachon mos ekani ma'lum, shuning uchun tekshiruvni
+            # butunlay o'tkazib yuboramiz. Faqat noaniq/boshqa kodek
+            # bo'lgandagina ffprobe orqali tekshirib, kerak bo'lsa tuzatamiz.
+            vcodec = (result.get("vcodec") or "").lower()
+            if vcodec.startswith("avc1") or vcodec.startswith("h264"):
+                pass  # allaqachon mos — hech narsa qilinmaydi (tezroq)
+            else:
+                downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
 
         size_mb = os.path.getsize(downloaded_path) / (1024 * 1024)
         if size_mb > MAX_TELEGRAM_MB:
@@ -1534,6 +1562,13 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 shutil.rmtree(img_dir, ignore_errors=True)
             except Exception as ge:
                 log.warning(f"gallery-dl zaxira usuli ham ishlamadi: {ge}")
+                # gallery-dl "login sahifasiga qaytarish" xatosini bersa —
+                # bu post FAQAT tizimga kirgan (va odatda obuna bo'lgan)
+                # foydalanuvchilarga ko'rinadi, ya'ni yopiq (private) akkaunt
+                # yoki cheklangan kontent. Buni foydalanuvchiga aniq aytamiz.
+                if "login" in str(ge).lower():
+                    await safe_edit(status, t("private_account", lang))
+                    return
             await safe_edit(status, t("generic_error", lang))
             return
 
@@ -1574,6 +1609,9 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 shutil.rmtree(media_dir, ignore_errors=True)
             except Exception as ge:
                 log.warning(f"gallery-dl zaxira usuli (JSON xatosi uchun) ham ishlamadi: {ge}")
+                if "login" in str(ge).lower():
+                    await safe_edit(status, t("private_account", lang))
+                    return
             await safe_edit(status, t("generic_error", lang))
             return
 
