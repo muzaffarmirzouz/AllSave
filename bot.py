@@ -920,16 +920,43 @@ async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 3) -> d
 
     Instagram ba'zan bir zumga bo'sh javob (JSON parse xatosi) qaytaradi —
     bu odatda vaqtinchalik bo'ladi, shuning uchun urinishlar sonini oshirib
-    va orasidagi kutish vaqtini uzaytirib qo'ydik (3 ta urinish, 4-8-12 soniya)."""
+    va orasidagi kutish vaqtini uzaytirib qo'ydik (3 ta urinish, 4-8-12 soniya).
+
+    Instagram uchun: agar barcha urinishlar COOKIE (login qilingan sessiya)
+    bilan muvaffaqiyatsiz bo'lsa va xato aynan "JSON parse" turida bo'lsa —
+    bu ko'pincha aynan o'sha sessiya Instagram tomonidan cheklanganini
+    anglatadi (akkauntning o'zi emas). Shu holatda oxirgi chora sifatida
+    BIR MARTA cookie'siz — anonim, tizimga kirmagan mehmon sifatida —
+    urinib ko'ramiz: ochiq (public) postlar ko'pincha anonim so'rovda
+    muammosiz yuklanadi, xuddi login talab qilmaydigan boshqa ko'p
+    Instagram-downloader botlar singari."""
     last_error = None
+    json_error_patterns = ("failed to parse json", "jsondecodeerror", "expecting value")
     for attempt in range(1, attempts + 1):
         try:
             return await asyncio.to_thread(_download_video_sync, url, ydl_opts)
         except yt_dlp.utils.DownloadError as e:
             last_error = e
+            err_text = str(e).lower()
             if attempt < attempts:
                 log.warning(f"Yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {e}")
                 await asyncio.sleep(4 * attempt)
+            elif (
+                "instagram.com" in url
+                and ydl_opts.get("cookiefile")
+                and any(p in err_text for p in json_error_patterns)
+            ):
+                log.warning("Cookie (login) sessiyasi bilan hammasi muvaffaqiyatsiz — anonim (cookie'siz) urinib ko'ramiz...")
+                anon_opts = dict(ydl_opts)
+                anon_opts.pop("cookiefile", None)
+                try:
+                    result = await asyncio.to_thread(_download_video_sync, url, anon_opts)
+                    log.info("Anonim (cookie'siz) urinish MUVAFFAQIYATLI bo'ldi.")
+                    return result
+                except yt_dlp.utils.DownloadError as e2:
+                    log.warning(f"Anonim urinish ham muvaffaqiyatsiz: {e2}")
+                    last_error = e2
+                raise last_error
             else:
                 raise
     raise last_error
@@ -1317,7 +1344,18 @@ def _ensure_telegram_compatible_sync(path: str) -> str:
         return path
 
 
-@router.message(F.text.startswith("http"))
+
+# Oldingi filtr (F.text.startswith("http")) faqat matn AYNAN "http" bilan
+# boshlansagina ishlar edi — agar foydalanuvchi havolani ilovadan
+# ulashganda oldiga sarlavha/matn qo'shilib kelsa, katta harf bilan
+# yozilsa (masalan "Https://..."), yoki oldida bo'shliq/yangi qator
+# bo'lsa, bot uni link deb tanimay, hech qanday javobsiz o'tkazib
+# yuborardi ("Update is not handled"). Endi matn ICHIDA qayerda bo'lishidan
+# qat'i nazar (katta-kichik harfga qaramasdan) havolani qidiramiz.
+URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+@router.message(F.text.regexp(r"(?i)https?://\S+"))
 async def handle_link(message: Message, bot: Bot, state: FSMContext):
     track_user(message.from_user.id, message.from_user.username)
     lang = get_user_lang(message.from_user.id) or "uz"
@@ -1326,7 +1364,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
 
-    url = message.text.strip()
+    match = URL_IN_TEXT_RE.search(message.text)
+    url = match.group(0) if match else message.text.strip()
 
     status = await message.answer(t("downloading", lang))
 
