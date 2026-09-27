@@ -1594,18 +1594,26 @@ async def handle_outro_upload(message: Message, bot: Bot, state: FSMContext):
         await message.answer(t("outro_save_error", lang))
 
 
-@router.message(WatermarkStates.waiting_video, F.video)
+@router.message(
+    F.video,
+    lambda message: (
+        get_user_logo_enabled(message.from_user.id) or get_user_outro_enabled(message.from_user.id)
+    ),
+)
 async def handle_owner_video(message: Message, bot: Bot):
-    """'Videoga Logo qo'yish' tugmasi (yoki /setlogo) bosilgandan keyin,
-    logo rejimi YOQILGAN holda qoladi — foydalanuvchi yuborgan HAR BIR
-    video shaxsiy logo (watermark) bilan qaytariladi, /start bosilmaguncha
-    (holat faqat /start orqali tozalanadi, bu yerda emas). Majburiy
-    obunani ham talab qiladi."""
+    """Logo va/yoki Outro rejimi YOQILGAN bo'lsa (bazada saqlangan,
+    mustaqil sozlamalar — /start bilan o'chmaydi, faqat /logooff yoki
+    /outrooff bilan), foydalanuvchi TO'G'RIDAN-TO'G'RI (link EMAS) video
+    FAYL yuborganda ham xuddi shu effekt(lar) qo'llaniladi — link orqali
+    yuklab olingan videoga qo'llanadigan mantiq bilan BIR XIL. Ikkalasi
+    ham yoqilgan bo'lsa, avval logo (watermark), so'ng outro qo'llanadi.
+    Majburiy obunani ham talab qiladi."""
     log.info(f"WMARK: handler boshlandi, user={message.from_user.id}")
     lang = get_user_lang(message.from_user.id) or "uz"
-    logo_file = _find_user_logo(message.from_user.id)
-    if not logo_file:
-        log.info("WMARK: shaxsiy logo yo'q, to'xtatildi (video o'zgarishsiz qoladi)")
+    logo_file = _find_user_logo(message.from_user.id) if get_user_logo_enabled(message.from_user.id) else None
+    outro_file = _find_user_outro(message.from_user.id) if get_user_outro_enabled(message.from_user.id) else None
+    if not logo_file and not outro_file:
+        log.info("WMARK: logo/outro fayli topilmadi, to'xtatildi")
         await message.answer(t("no_personal_logo", lang))
         return
     position = get_user_logo_position(message.from_user.id)
@@ -1616,25 +1624,37 @@ async def handle_owner_video(message: Message, bot: Bot):
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
 
-    status = await message.answer("\U0001F3A8 Logo qo'yilmoqda...")
+    status = await message.answer("\U0001F3A8 Ishlov berilmoqda...")
     log.info("WMARK: status xabari yuborildi, yuklab olish boshlanmoqda")
     input_path = None
-    output_path = None
+    current_path = None
     try:
         file_info = await bot.get_file(message.video.file_id)
         log.info(f"WMARK: file_info olindi, hajmi={message.video.file_size}")
         input_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp4")
-        output_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_logo.mp4")
         await bot.download_file(file_info.file_path, destination=input_path)
-        log.info("WMARK: video yuklab olindi, ffmpeg boshlanmoqda")
+        current_path = input_path
+        log.info("WMARK: video yuklab olindi, ishlov boshlanmoqda")
 
-        await asyncio.wait_for(
-            asyncio.to_thread(_add_watermark_sync, input_path, output_path, logo_file, position),
-            timeout=180,
-        )
-        log.info("WMARK: ffmpeg tugadi, video yuborilmoqda")
+        if logo_file:
+            wm_output = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_logo.mp4")
+            await asyncio.wait_for(
+                asyncio.to_thread(_add_watermark_sync, current_path, wm_output, logo_file, position),
+                timeout=180,
+            )
+            current_path = wm_output
+            log.info("WMARK: logo qo'yildi")
 
-        await bot.send_video(chat_id=message.chat.id, video=FSInputFile(output_path))
+        if outro_file:
+            outro_output = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_outro.mp4")
+            await asyncio.wait_for(
+                asyncio.to_thread(_append_outro_sync, current_path, outro_output, outro_file),
+                timeout=180,
+            )
+            current_path = outro_output
+            log.info("WMARK: outro qo'shildi")
+
+        await bot.send_video(chat_id=message.chat.id, video=FSInputFile(current_path))
         log.info("WMARK: video muvaffaqiyatli yuborildi")
         await status.delete()
     except asyncio.TimeoutError:
@@ -1642,12 +1662,13 @@ async def handle_owner_video(message: Message, bot: Bot):
         await safe_edit(status, "\u274C Vaqt tugadi (video juda uzun bo'lishi mumkin).")
     except Exception as e:
         log.error(f"WMARK: XATO -> {type(e).__name__}: {e}")
-        await safe_edit(status, "\u274C Logo qo'yishda xatolik yuz berdi.")
+        await safe_edit(status, "\u274C Ishlov berishda xatolik yuz berdi.")
     finally:
-        for p in (input_path, output_path):
-            if p and os.path.exists(p):
+        seen = set()
+        for p in (input_path, current_path):
+            if p and p not in seen and os.path.exists(p):
                 os.remove(p)
-
+                seen.add(p)
 
 def _ensure_telegram_compatible_sync(path: str) -> str:
     """Video kodeki Telegram bilan mos (H.264) emasligini tekshiradi, va
