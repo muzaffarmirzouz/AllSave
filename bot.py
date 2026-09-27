@@ -1907,11 +1907,13 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             except Exception as ge:
                 log.warning(f"gallery-dl zaxira usuli ham ishlamadi: {ge}")
                 # gallery-dl "login sahifasiga qaytarish" xatosini bersa —
-                # bu post FAQAT tizimga kirgan (va odatda obuna bo'lgan)
-                # foydalanuvchilarga ko'rinadi, ya'ni yopiq (private) akkaunt
-                # yoki cheklangan kontent. Buni foydalanuvchiga aniq aytamiz.
+                # bu HAR DOIM ham post yopiq (private) degani emas (tajriba
+                # shuni ko'rsatdi — ochiq postlarda ham chiqishi mumkin,
+                # ko'pincha cookie/sessiya muammosi tufayli). Shuning uchun
+                # aniq "profil yopiq" da'vosi o'rniga, umumiyroq
+                # "tizimga kirish talab qilinadi" xabarini ko'rsatamiz.
                 if "login" in str(ge).lower():
-                    await safe_edit(status, t("private_account", lang))
+                    await safe_edit(status, t("login_required", lang))
                     return
             await safe_edit(status, t("generic_error", lang))
             return
@@ -1954,7 +1956,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             except Exception as ge:
                 log.warning(f"gallery-dl zaxira usuli (JSON xatosi uchun) ham ishlamadi: {ge}")
                 if "login" in str(ge).lower():
-                    await safe_edit(status, t("private_account", lang))
+                    await safe_edit(status, t("login_required", lang))
                     return
             await safe_edit(status, t("generic_error", lang))
             return
