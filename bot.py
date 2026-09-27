@@ -16,6 +16,7 @@ ruxsatsiz ommaviy tarqatishdan saqlaning.
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import re
@@ -1063,7 +1064,7 @@ def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
     threadda ishga tushiriladi."""
     import subprocess
 
-    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime"]
+    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime", "--write-metadata"]
     if IG_COOKIES_FILE:
         cmd += ["--cookies", IG_COOKIES_FILE]
     cmd.append(url)
@@ -1082,6 +1083,26 @@ def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
     return files
 
 
+def _extract_gallery_dl_caption(file_path: str) -> str:
+    """gallery-dl `--write-metadata` bilan har bir media fayl yoniga
+    yozgan `<fayl>.json` metadata faylidan asl post izohini (caption)
+    o'qib olishga harakat qiladi. Instagram uchun bu odatda "description"
+    yoki "content" kaliti ostida saqlanadi. Topilmasa bo'sh satr qaytaradi."""
+    json_path = file_path + ".json"
+    if not os.path.exists(json_path):
+        return ""
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        return ""
+    for key in ("description", "content", "caption", "title"):
+        val = meta.get(key)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
 def _download_media_gallery_dl_sync(url: str, output_dir: str) -> list:
     """yt-dlp Instagram'dan JSON javobini o'qiy olmay xato bergan hollarda
     (masalan "Failed to parse JSON" / bo'sh javob) zaxira (backup) vosita
@@ -1092,7 +1113,7 @@ def _download_media_gallery_dl_sync(url: str, output_dir: str) -> list:
     tartiblangan) qaytaradi. Bloklaydigan (sinxron) funksiya."""
     import subprocess
 
-    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime"]
+    cmd = ["gallery-dl", "-D", output_dir, "--no-mtime", "--write-metadata"]
     if IG_COOKIES_FILE:
         cmd += ["--cookies", IG_COOKIES_FILE]
     cmd.append(url)
@@ -1204,6 +1225,24 @@ IMAGE_CAPTION = (
 )
 
 
+def _build_image_caption(izoh: str = "") -> str:
+    """Rasm bilan birga yuboriladigan izohni tayyorlaydi: asl post izohi
+    (agar topilgan bo'lsa) + botning o'z reklamasi. Izoh topilmasa,
+    eskicha umumiy IMAGE_CAPTION qaytariladi. Telegram caption chegarasi
+    (1024 belgi)dan oshmaydi."""
+    footer = f"\n\nUshbu rasm eng sifatli tarzda {BOT_USERNAME_TAG} orqali yuklab olindi \U0001F4F8"
+    izoh = (izoh or "").strip()
+    if not izoh:
+        return IMAGE_CAPTION
+
+    max_izoh_len = 1024 - len(footer) - 5
+    if max_izoh_len <= 10:
+        return IMAGE_CAPTION
+    if len(izoh) > max_izoh_len:
+        izoh = izoh[:max_izoh_len].rstrip() + "..."
+    return (izoh + footer)[:1024]
+
+
 def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
     """FFmpeg orqali videoga berilgan logo faylni, berilgan pozitsiyada
     qo'yadi. GIF/WEBM butun video davomiyligiga yetguncha aylantiriladi
@@ -1236,14 +1275,39 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         raise RuntimeError(f"ffmpeg xato: {result.stderr[-500:]}")
 
 
+def _probe_duration_sync(path: str) -> float:
+    """ffprobe orqali fayl davomiyligini (soniyalarda) qaytaradi.
+    Aniqlab bo'lmasa 0.0 qaytaradi (xavfsiz zaxira)."""
+    import subprocess
+
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(probe.stdout.strip())
+    except Exception:
+        return 0.0
+
+
 def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> None:
     """FFmpeg orqali asosiy videoning OXIRIGA outro videoni ulaydi.
     Outro avval asosiy videoning o'lchamiga (scale2ref) moslashtiriladi
     (ikkalasi turli o'lcham/nisbatda bo'lsa ham), audio formatlari ham
-    bir xillashtiriladi, so'ng ikkalasi 'concat' filtri orqali
-    birlashtiriladi. Bloklaydigan (sinxron) funksiya — alohida threadda
-    ishga tushiriladi."""
+    bir xillashtiriladi, so'ng ikkalasi ORASIDA silliq FADE (xira o'tish)
+    effekti bilan ulanadi ('xfade'/'acrossfade' filtrlari) — video keskin
+    (qattiq) sakramaydi, balki asta-sekin outroga o'tadi. Bloklaydigan
+    (sinxron) funksiya — alohida threadda ishga tushiriladi."""
     import subprocess
+
+    # Fade davomiyligi — asosiy video juda qisqa bo'lsa, fade shundan
+    # oshib ketmasligi uchun moslashtirib qisqartiramiz.
+    fade_dur = 0.6
+    main_duration = _probe_duration_sync(input_path)
+    if main_duration > 0:
+        fade_dur = min(fade_dur, max(main_duration - 0.1, 0.1))
+    offset = max(main_duration - fade_dur, 0.0)
 
     cmd = [
         "ffmpeg", "-y",
@@ -1256,7 +1320,8 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
         "[outro_v]setsar=1,fps=30[outro_v2];"
         "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[main_a];"
         "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[outro_a];"
-        "[main_v2][main_a][outro_v2][outro_a]concat=n=2:v=1:a=1[outv][outa]",
+        f"[main_v2][outro_v2]xfade=transition=fade:duration={fade_dur:.2f}:offset={offset:.2f}[outv];"
+        f"[main_a][outro_a]acrossfade=d={fade_dur:.2f}[outa]",
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
         "-c:a", "aac",
@@ -1819,7 +1884,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             await bot.send_photo(
                 chat_id=message.chat.id,
                 photo=FSInputFile(downloaded_path),
-                caption=IMAGE_CAPTION,
+                caption=_build_image_caption(result.get("description") or result.get("title") or ""),
             )
             await status.delete()
             return
@@ -1910,14 +1975,15 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 )
                 if image_paths:
                     await safe_edit(status, t("uploading", lang))
+                    gd_caption = _build_image_caption(_extract_gallery_dl_caption(image_paths[0]))
                     if len(image_paths) == 1:
                         await bot.send_photo(
                             chat_id=message.chat.id, photo=FSInputFile(image_paths[0]),
-                            caption=IMAGE_CAPTION,
+                            caption=gd_caption,
                         )
                     else:
                         media = [InputMediaPhoto(media=FSInputFile(p)) for p in image_paths[:10]]
-                        media[0].caption = IMAGE_CAPTION
+                        media[0].caption = gd_caption
                         await bot.send_media_group(chat_id=message.chat.id, media=media)
                     await status.delete()
                     for p in image_paths:
@@ -1954,19 +2020,26 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 if media_paths:
                     await safe_edit(status, t("uploading", lang))
                     video_exts = (".mp4", ".mov", ".webm")
+                    gd_izoh = _extract_gallery_dl_caption(media_paths[0])
                     if len(media_paths) == 1:
                         p = media_paths[0]
                         if p.lower().endswith(video_exts):
-                            await bot.send_video(chat_id=message.chat.id, video=FSInputFile(p), caption=IMAGE_CAPTION)
+                            gd_caption = _build_caption({"description": gd_izoh})
+                            await bot.send_video(chat_id=message.chat.id, video=FSInputFile(p), caption=gd_caption)
                         else:
-                            await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(p), caption=IMAGE_CAPTION)
+                            gd_caption = _build_image_caption(gd_izoh)
+                            await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(p), caption=gd_caption)
                     else:
                         media = [
                             InputMediaVideo(media=FSInputFile(p)) if p.lower().endswith(video_exts)
                             else InputMediaPhoto(media=FSInputFile(p))
                             for p in media_paths[:10]
                         ]
-                        media[0].caption = IMAGE_CAPTION
+                        first_is_video = media_paths[0].lower().endswith(video_exts)
+                        media[0].caption = (
+                            _build_caption({"description": gd_izoh}) if first_is_video
+                            else _build_image_caption(gd_izoh)
+                        )
                         await bot.send_media_group(chat_id=message.chat.id, media=media)
                     await status.delete()
                     for p in media_paths:
