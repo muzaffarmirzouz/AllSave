@@ -1306,7 +1306,7 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
     # Fade davomiyligi — JUDA QISQA (foydalanuvchi so'ragan). Asosiy video
     # juda qisqa bo'lsa, fade shundan oshib ketmasligi uchun moslashtirib
     # qisqartiramiz.
-    fade_dur = 0.25
+    fade_dur = 0.4
     main_duration = _probe_duration_sync(input_path)
     if main_duration > 0:
         fade_dur = min(fade_dur, max(main_duration - 0.1, 0.1))
