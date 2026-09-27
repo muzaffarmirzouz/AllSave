@@ -1295,15 +1295,18 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
     """FFmpeg orqali asosiy videoning OXIRIGA outro videoni ulaydi.
     Outro avval asosiy videoning o'lchamiga (scale2ref) moslashtiriladi
     (ikkalasi turli o'lcham/nisbatda bo'lsa ham), audio formatlari ham
-    bir xillashtiriladi, so'ng ikkalasi ORASIDA silliq FADE (xira o'tish)
-    effekti bilan ulanadi ('xfade'/'acrossfade' filtrlari) — video keskin
-    (qattiq) sakramaydi, balki asta-sekin outroga o'tadi. Bloklaydigan
-    (sinxron) funksiya — alohida threadda ishga tushiriladi."""
+    bir xillashtiriladi, so'ng ikkalasi ORASIDA QORAYIB-OQARISH (fade to
+    black) effekti bilan ulanadi: asosiy video oxiri sekin qorayadi, so'ng
+    outro sekin oqarib ochiladi ('xfade' transition=fadeblack va
+    'acrossfade' filtrlari) — video keskin (qattiq) sakramaydi. Effekt
+    juda qisqa (o'ta sezilarli bo'lmasligi uchun). Bloklaydigan (sinxron)
+    funksiya — alohida threadda ishga tushiriladi."""
     import subprocess
 
-    # Fade davomiyligi — asosiy video juda qisqa bo'lsa, fade shundan
-    # oshib ketmasligi uchun moslashtirib qisqartiramiz.
-    fade_dur = 0.6
+    # Fade davomiyligi — JUDA QISQA (foydalanuvchi so'ragan). Asosiy video
+    # juda qisqa bo'lsa, fade shundan oshib ketmasligi uchun moslashtirib
+    # qisqartiramiz.
+    fade_dur = 0.25
     main_duration = _probe_duration_sync(input_path)
     if main_duration > 0:
         fade_dur = min(fade_dur, max(main_duration - 0.1, 0.1))
@@ -1320,7 +1323,7 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
         "[outro_v]setsar=1,fps=30[outro_v2];"
         "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[main_a];"
         "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[outro_a];"
-        f"[main_v2][outro_v2]xfade=transition=fade:duration={fade_dur:.2f}:offset={offset:.2f}[outv];"
+        f"[main_v2][outro_v2]xfade=transition=fadeblack:duration={fade_dur:.2f}:offset={offset:.2f}[outv];"
         f"[main_a][outro_a]acrossfade=d={fade_dur:.2f}[outa]",
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
