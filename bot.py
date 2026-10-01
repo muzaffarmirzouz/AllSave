@@ -1565,10 +1565,35 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
     tomonidan o'qib bo'lmagani uchun rad etiladi."""
     # Cookies — faqat bot egasi uchun (bu maxfiy, hisobga oid ma'lumot).
     cookies_kind = _awaiting_cookies_from.get(message.from_user.id)
+
+    # ZAXIRA ANIQLASH: agar bot egasi /setcookies_ig yoki /setcookies_yt
+    # buyrug'ini oldindan yubormagan bo'lsa (yoki Railway o'sha vaqt
+    # oralig'ida qayta ishga tushib, xotiradagi "kutilmoqda" holati
+    # o'chib ketgan bo'lsa — _awaiting_cookies_from doimiy saqlanmaydi),
+    # fayl nomidan ("cookies", "instagram"/"ig", "youtube"/"yt" so'zlari)
+    # kelib chiqib ANIQLASHGA harakat qilamiz, shunda cookies fayli
+    # tasodifan logo sifatida ishlov olib, sezilmay yo'qolib qolmaydi.
+    if not cookies_kind and message.document and OWNER_CHAT_IDS and message.from_user.id in OWNER_CHAT_IDS:
+        fname = (message.document.file_name or "").lower()
+        if "cookie" in fname or fname.endswith(".txt"):
+            if "yt" in fname or "youtube" in fname:
+                cookies_kind = "yt"
+            elif "ig" in fname or "insta" in fname:
+                cookies_kind = "ig"
+            elif "cookie" in fname:
+                # Nomi aniq ko'rsatmasa — standart ravishda Instagram deb
+                # qabul qilamiz (eng tez-tez yangilanadigan cookie shu).
+                cookies_kind = "ig"
+            if cookies_kind:
+                log.info(
+                    f"Cookies fayli /setcookies buyrug'isiz aniqlandi "
+                    f"(fayl nomi: {fname!r}) -> {cookies_kind}"
+                )
+
     if cookies_kind and message.document:
         if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
             return
-        del _awaiting_cookies_from[message.from_user.id]
+        _awaiting_cookies_from.pop(message.from_user.id, None)
         await _handle_cookies_upload(message, bot, cookies_kind)
         return
 
@@ -1582,6 +1607,23 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
 
     # Logo — endi HAR KIM o'zi uchun sozlashi mumkin.
     if message.from_user.id not in _awaiting_logo_from:
+        # ESLATMA: avval bu yerda hech narsa javob qaytarmasdan jim
+        # to'xtalardi — shu sababli, masalan, bot egasi /setcookies_ig
+        # buyrug'ini YUBORMASDAN to'g'ridan-to'g'ri cookies.txt yuborsa
+        # (yoki buyruqdan keyin bot qayta ishga tushib ulgurgan bo'lsa),
+        # fayl HECH QANDAY xabarsiz e'tiborsiz qoldirilardi va bot egasi
+        # cookies yangilanmaganini darhol bilolmasdi. Endi bot egasiga
+        # kamida tushuntirish beramiz.
+        if (
+            message.document
+            and OWNER_CHAT_IDS
+            and message.from_user.id in OWNER_CHAT_IDS
+        ):
+            await message.answer(
+                "ℹ️ Bu faylni cookies sifatida qabul qilolmadim — "
+                "avval /setcookies_ig yoki /setcookies_yt buyrug'ini yuboring, "
+                "SO'NG cookies.txt faylini yuboring."
+            )
         return
     lang = get_user_lang(message.from_user.id) or "uz"
 
