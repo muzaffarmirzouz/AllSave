@@ -254,21 +254,36 @@ def ct(key: str, lang: str, **kwargs) -> str:
 
 # ------------------------------------------------------------- /caption kirish
 
-@caption_router.message(Command("caption"))
-async def cmd_caption(message: Message, state: FSMContext):
+def _enable_caption_for(user_id: int) -> None:
     """Titr qo'shishni YOQADI — bu endi doimiy (bazada saqlanadigan)
     sozlama, FSM "rejim" EMAS. Bir marta yoqilsa, keyingi HAR BIR
     video/link'ga avtomatik titr qo'shiladi, /start bosilganda ham
     o'chmaydi. O'chirish uchun /captionoff kerak."""
-    _set_caption_enabled(message.from_user.id, True)
+    _set_caption_enabled(user_id, True)
+
+
+@caption_router.message(Command("caption"))
+async def cmd_caption(message: Message, state: FSMContext):
+    _enable_caption_for(message.from_user.id)
     lang = get_lang(message.from_user.id)
     await message.answer(ct("mode_on", lang), parse_mode="HTML")
 
 
 @caption_router.callback_query(F.data == "mode_caption")
 async def cb_caption_mode(callback: CallbackQuery, state: FSMContext):
+    """MUHIM TUZATISH: avval bu yerda `cmd_caption(callback.message, ...)`
+    chaqirilardi — lekin `callback.message` BOTNING o'zi yuborgan xabar
+    (tugma bosilgan xabar), shuning uchun `callback.message.from_user.id`
+    aslida BOTNING o'z ID'sini qaytaradi, tugmani bosgan FOYDALANUVCHINING
+    EMAS! Shu sabab "📝 Videoga Text qo'yish" tugmasi orqali yoqilganda,
+    sozlama botning (hech qachon video yubormaydigan) "foydalanuvchisi"ga
+    yozilib, HAQIQIY foydalanuvchiga HECH QACHON yoqilmay qolardi — shuning
+    uchun video yuborganda ham oddiy (titrsiz) qaytardi. To'g'ri ID —
+    `callback.from_user.id` (tugmani bosgan HAQIQIY odam)."""
     await callback.answer()
-    await cmd_caption(callback.message, state)
+    _enable_caption_for(callback.from_user.id)
+    lang = get_lang(callback.from_user.id)
+    await callback.message.answer(ct("mode_on", lang), parse_mode="HTML")
 
 
 @caption_router.message(Command("captionoff"))
