@@ -631,20 +631,62 @@ async def get_video_dimensions(path: Path) -> tuple:
     o'lchamini videoning HAQIQIY o'lchamiga moslashtirish uchun kerak —
     aks holda ASS faylidagi etalon o'lcham (masalan 384x288) bilan haqiqiy
     video o'lchami (masalan 1080x1920) mos kelmay, matn nisbatan juda katta
-    yoki kichik bo'lib chiqadi."""
+    yoki kichik bo'lib chiqadi.
+
+    MUHIM (aylanish/rotation tuzatishi): ffprobe "width"/"height"
+    maydonlari videoning KODLANGAN (xom, aylanishdan OLDINGI) o'lchamini
+    qaytaradi. Telefon kamerasi bilan vertikal suratga olingan ko'plab
+    videolar (ayniqsa to'g'ridan-to'g'ri botga yuborilganda — havola
+    orqali yt-dlp bilan yuklangan videolar odatda bu bilgi bo'lmagan
+    holda allaqachon "to'g'ri" tomonga kodlangan bo'ladi) aslida
+    GORIZONTAL piksellar bilan kodlanadi, lekin faylga "90 daraja
+    buramoq kerak" degan metama'lumot (rotation) biriktirilgan bo'ladi —
+    ffmpeg buni ko'rsatish/render paytida avtomatik qo'llaydi. Agar biz
+    buni hisobga olmasak, PlayResX/PlayResY (va shrift o'lchami,
+    "landshaft/portret" aniqlash) TESKARI chiqadi — aynan shuning uchun
+    bir xil video havola orqali yuklanganda to'g'ri, lekin
+    to'g'ridan-to'g'ri yuborilganda BOSHQACHA (noto'g'ri o'lcham/joyda)
+    chiqishi mumkin. Shuning uchun bu yerda "rotate" tegi va
+    "side_data_list" ichidagi "rotation" maydoni (Display Matrix)
+    tekshirilib, 90/270 darajali aylanish bo'lsa kenglik/balandlik
+    ALMASHTIRILADI."""
     cmd = [
         "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
-        "-of", "csv=s=x:p=0", str(path),
+        "-show_entries", "stream=width,height:stream_tags=rotate",
+        "-show_entries", "stream_side_data_list",
+        "-of", "json", str(path),
     ]
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     out, _ = await proc.communicate()
     try:
-        w_str, h_str = out.decode().strip().split("x")
-        return int(w_str), int(h_str)
-    except (ValueError, AttributeError):
+        import json as _json
+        data = _json.loads(out.decode())
+        stream = data["streams"][0]
+        width = int(stream["width"])
+        height = int(stream["height"])
+
+        rotation = 0
+        tags = stream.get("tags") or {}
+        if "rotate" in tags:
+            try:
+                rotation = int(tags["rotate"])
+            except (TypeError, ValueError):
+                rotation = 0
+        for side_data in stream.get("side_data_list") or []:
+            if "rotation" in side_data:
+                try:
+                    rotation = int(side_data["rotation"])
+                except (TypeError, ValueError):
+                    pass
+
+        rotation = rotation % 360
+        if rotation in (90, 270):
+            width, height = height, width
+
+        return width, height
+    except (ValueError, AttributeError, KeyError, IndexError, TypeError):
         return 1080, 1920  # aniqlab bo'lmasa, vertikal video uchun oqilona standart
 
 
