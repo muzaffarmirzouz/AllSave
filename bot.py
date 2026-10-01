@@ -286,11 +286,12 @@ def db():
             lang TEXT,
             logo_position TEXT,
             logo_enabled INTEGER,
-            outro_enabled INTEGER
+            outro_enabled INTEGER,
+            caption_enabled INTEGER
         )
     """)
     # Eski bazalarda ba'zi ustunlar bo'lmasligi mumkin — xavfsiz qo'shamiz.
-    for col in ("lang", "logo_position", "logo_enabled", "outro_enabled"):
+    for col in ("lang", "logo_position", "logo_enabled", "outro_enabled", "caption_enabled"):
         try:
             col_type = "TEXT" if col in ("lang", "logo_position") else "INTEGER"
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
@@ -370,6 +371,25 @@ def get_user_outro_enabled(user_id: int) -> bool:
 def set_user_outro_enabled(user_id: int, enabled: bool):
     conn = db()
     conn.execute("UPDATE users SET outro_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
+    conn.commit()
+    conn.close()
+
+
+# Text/Titr (caption_mode.py) rejimi ham endi Logo/Outro kabi MUSTAQIL,
+# doimiy (bazada saqlanadigan) sozlama — ATAYLAB /start bilan o'chmaydi
+# (faqat /captionoff yoki mos "o'chirish" tugmasi orqali), shunda
+# foydalanuvchi har safar qaytadan yoqishi shart emas.
+
+def get_user_caption_enabled(user_id: int) -> bool:
+    conn = db()
+    row = conn.execute("SELECT caption_enabled FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return bool(row and row[0])
+
+
+def set_user_caption_enabled(user_id: int, enabled: bool):
+    conn = db()
+    conn.execute("UPDATE users SET caption_enabled = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
     conn.commit()
     conn.close()
 
@@ -820,9 +840,11 @@ def outro_choice_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 @router.message(F.text == "/start")
 async def cmd_start(message: Message, bot: Bot, state: FSMContext):
-    # Har safar /start bosilganda, foydalanuvchi /caption yoki /setlogo kabi
-    # jarayonda qolib ketgan bo'lsa ham, oddiy (logosiz, titrsiz) yuklab olish
-    # rejimiga qaytariladi.
+    # Har safar /start bosilganda, vaqtinchalik FSM holatlari (masalan
+    # /setlogo GIF kutish jarayoni) tozalanadi. MUHIM: Logo/Outro/Titr
+    # YOQILGAN/O'CHIRILGAN holati FSM'da EMAS, bazada saqlanadi — shuning
+    # uchun bular /start bosilganda O'CHIB QOLMAYDI (faqat tegishli
+    # /logooff, /outrooff, /captionoff orqali o'chadi).
     await state.clear()
 
     track_user(message.from_user.id, message.from_user.username)
@@ -2138,6 +2160,7 @@ async def main():
         BotCommand(command="outrooff", description="Shaxsiy outro'ni o'chirish"),
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
         BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
+        BotCommand(command="captionoff", description="Titr qo'shishni o'chirish"),
     ]
     # Hamma foydalanuvchi uchun umumiy (standart) buyruqlar ro'yxati —
     # cookies buyruqlari BU YERDA YO'Q, shuning uchun oddiy foydalanuvchilar
