@@ -575,7 +575,7 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
 
             srt_path = tmp / "subs.ass"
             video_width, video_height = await get_video_dimensions(src_path)
-            write_ass(words, srt_path, video_width, video_height)
+            box_specs = write_ass(words, srt_path, video_width, video_height)
 
             await status.edit_text(ct("burning", lang))
             out_path = tmp / "output.mp4"
@@ -596,7 +596,7 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
                 pass
 
             try:
-                await burn_subtitles(src_path, srt_path, out_path, target_kbps)
+                await burn_subtitles(src_path, srt_path, out_path, target_kbps, box_specs, video_width, video_height)
             except RuntimeError as e:
                 logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
                 await status.edit_text(ct("burn_failed", lang))
@@ -705,6 +705,23 @@ def format_ass_timestamp(seconds: float) -> str:
     return f"{h:01}:{m:02}:{s:02}.{cs:02}"
 
 
+# Matn fonini (orqa fonini) tekis to'rtburchak "ramka" sifatida chizish
+# uchun kalibrlangan nisbatlar. Bular haqiqiy ffmpeg+libass renderini
+# piksel darajasida o'lchab (Urbanist shrifti bilan, turli matn va video
+# o'lchamlarida) aniqlangan, shunchaki taxmin emas:
+#   - matnning pastki chetidan frame tagiga masofa ≈ MarginV + 0.15*font_size
+#   - matn balandligi ≈ 0.69*font_size (xavfsizlik uchun 0.78 olinadi, chunki
+#     "g", "y", "p" kabi pastga tushadigan harflar balandroq bo'lishi mumkin)
+#   - bitta belgining o'rtacha kengligi ≈ 0.39*font_size (katta harflar va
+#     probel bilan matnlarda kengroq chiqishi hisobga olinib, xavfsiz
+#     "yuqori chegara" sifatida tanlangan)
+_BOX_BOTTOM_OFFSET_RATIO = 0.15
+_BOX_TEXT_HEIGHT_RATIO = 0.78
+_BOX_CHAR_WIDTH_RATIO = 0.39
+_BOX_PAD_V_RATIO = 0.38
+_BOX_PAD_H_RATIO = 0.55
+
+
 def write_ass(
     words,
     path: Path,
@@ -714,33 +731,37 @@ def write_ass(
     fade_in_ms: int = 250,
     fade_out_ms: int = 150,
 ):
-    """SRT o'rniga to'liq ASS fayl yasaydi — bu zamonaviy (Urbanist)
-    shrift, har bir harf ortida BILINAR-BILINMAS, yumshoq (xira, shaffof)
-    "halo" fon va sekin paydo bo'ladigan (fade-in) subtitrlarga imkon
-    beradi (bular SRT formatida ishlamaydi).
+    """To'liq ASS fayl yasaydi — zamonaviy (Urbanist) shrift, oddiy va
+    o'qilishi oson matn uslubi (yupqa kontur, QUTI/halo YO'Q) hamda sekin
+    paydo bo'ladigan (fade-in/out) subtitrlarga imkon beradi.
 
-    ESLATMA (muhim texnik tafsilot): avval bu yerda ASS'ning "BorderStyle=3"
-    (to'rtburchak QUTI fon) rejimi ishlatilgan edi, lekin amalda (haqiqiy
-    ffmpeg bilan piksel darajasida tekshirilganda) aniqlandiki — bu
-    muhitdagi libass kutubxonasi quti foni uchun SHAFFOFLIKNI BUTUNLAY
-    e'tiborsiz qoldiradi (qancha shaffof qilib belgilamang, baribir
-    100% qattiq/tiniq bo'lib chiqadi). Shuning uchun o'rniga matnning
-    o'ziga yumshoq, xira (blur) va HAQIQATAN shaffof "halo" (soyaga
-    o'xshash yumshoq kontur) beriladigan usulga o'tildi — bu usul
-    shaffoflikni to'g'ri qo'llaydi va "bilinar-bilinmas fon" talabiga
-    ancha yaqinroq, zamonaviy ko'rinish beradi.
+    ESLATMA (muhim texnik tafsilot): avval matn ortiga "fon" effekti ASS
+    faylining o'zida — avval BorderStyle=3 (quti), keyin esa qalin/xira
+    (blur) kontur ("halo") orqali — berilgan edi. Ikkalasi ham qoniqarsiz
+    chiqdi: BorderStyle=3 quti shaffoflikni (BackColour alfasini) BUTUNLAY
+    e'tiborsiz qoldiradi (libass'dagi cheklov, piksel darajasida
+    tekshirilgan), halo esa tekis emas, xira/noaniq chekka berardi.
+    Shuning uchun fon endi ASS faylida EMAS — alohida, ffmpeg'ning
+    "drawbox" filtri orqali (bu HAQIQIY shaffoflikni qo'llab-quvvatlaydi
+    va chekkalari TEKIS/to'g'ri chiqadi) chiziladi: pastda shu funksiya har
+    bir subtitr qatori uchun to'rtburchak "ramka" o'lchami va joyini
+    hisoblab, uni burn_subtitles() ga qaytaradi.
 
     video_width/video_height — ASS faylining "etalon o'lchami"
     (PlayResX/PlayResY) videoning HAQIQIY o'lchamiga tenglashtiriladi,
     aks holda libass matnni noto'g'ri nisbatda (juda katta/kichik)
     chizib yuboradi. Shrift o'lchami videoning balandligiga nisbatan
-    (~4.2%) hisoblanadi, shunda istalgan o'lchamdagi videoda mutanosib
-    chiqadi.
+    hisoblanadi, shunda istalgan o'lchamdagi videoda mutanosib chiqadi.
 
     ESLATMA: font_name tizimga (apt orqali) o'rnatilgan bo'lishi SHART
     EMAS — FONTS_DIR ("fonts/" papkasi) ichidagi .ttf fayl burn_subtitles()
     funksiyasida ffmpeg'ning "fontsdir" parametri orqali to'g'ridan-to'g'ri
-    ulanadi. Shunchaki o'sha papkaga mos .ttf faylni qo'yish kifoya."""
+    ulanadi. Shunchaki o'sha papkaga mos .ttf faylni qo'yish kifoya.
+
+    Qaytaradi: har bir subtitr qatoriga mos "box_specs" ro'yxati — bu
+    ro'yxatning har bir elementi (start, end, x, y, w, h) bo'lib,
+    burn_subtitles() uning asosida tekis, shaffof fon-ramkalarini
+    (drawbox) chizadi."""
     # ESLATMA: gorizontal (16:9 kabi, kenglik balandlikdan katta) videolar
     # ekranda ko'rsatilganda balandligi kichikroq bo'lib chiqadi (masalan
     # Telegram uni kenglik bo'yicha moslashtiradi), shuning uchun bir xil
@@ -751,11 +772,7 @@ def write_ass(
     font_ratio = 0.062 if is_landscape else 0.032
     font_size = max(16, int(video_height * font_ratio))
     margin_v = int(video_height * 0.34)
-    # "Halo" kengligi (matn konturi atrofidagi yumshoq fon kengligi) va
-    # uning xiraligi (blur) — ikkalasi ham shrift o'lchamiga nisbatan
-    # hisoblanadi, shunda istalgan video o'lchamida mutanosib chiqadi.
-    halo_width = max(8, int(font_size * 0.30))
-    halo_blur = max(2, int(font_size * 0.035))
+    outline_width = max(1, int(font_size * 0.045))
 
     header = (
         "[Script Info]\n"
@@ -768,16 +785,12 @@ def write_ass(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=1 -> QUTI
-        # YO'Q, faqat kontur (outline) + soya — lekin konturni juda QALIN
-        # (halo_width) va YUMShOQ (pastdagi {\blur} orqali) qilib, uni
-        # "fon" o'rnida ishlatamiz. OutlineColour'ning birinchi ikki
-        # heksa-raqami (&HC8......) ALFA (shaffoflik): 00=butunlay tiniq,
-        # FF=butunlay shaffof (ko'rinmaydi). &HC8 (~78% shaffof, ~22%
-        # xiralik) — HAQIQATAN "bilinar-bilinmas", juda nozik bo'lishi
-        # uchun tanlangan va piksel darajasida tekshirilgan.
+        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=1 -> faqat
+        # yupqa kontur (outline) + yengil soya — oddiy, toza, o'qilishi oson
+        # matn ko'rinishi uchun. Fon/ramka endi bu yerda EMAS, pastdagi
+        # drawbox orqali chiziladi.
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
-        f"&HC8000000,&H00000000,-1,0,0,0,100,100,0,0,1,{halo_width},0,"
+        f"&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{outline_width},1,"
         f"2,20,20,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -785,44 +798,106 @@ def write_ass(
 
     entries = group_words_into_lines(words)
     lines = [header]
+    box_specs = []
     for start, end, text in entries:
         if not text:
             continue
         start_ts = format_ass_timestamp(start)
         end_ts = format_ass_timestamp(end)
         # {\fad(in_ms,out_ms)} -> qator sekin paydo bo'lib, sekin yo'qoladi.
-        # {\blur} -> konturni yumshatadi, shunda u qattiq chiziq emas,
-        # yumshoq "halo"/soya ko'rinishida chiqadi.
         lines.append(
             f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,"
-            f"{{\\fad({fade_in_ms},{fade_out_ms})\\blur{halo_blur}}}{text}\n"
+            f"{{\\fad({fade_in_ms},{fade_out_ms})}}{text}\n"
         )
+
+        # --- Shu qatorga mos tekis fon-ramka (drawbox) o'lchami/joyi ---
+        box_h = font_size * (_BOX_TEXT_HEIGHT_RATIO + 2 * _BOX_PAD_V_RATIO)
+        box_w = len(text) * font_size * _BOX_CHAR_WIDTH_RATIO + 2 * font_size * _BOX_PAD_H_RATIO
+        max_box_w = video_width * 0.94
+        if box_w > max_box_w:
+            box_w = max_box_w
+
+        text_bottom_abs = video_height - margin_v - font_size * _BOX_BOTTOM_OFFSET_RATIO
+        box_bottom_abs = text_bottom_abs + font_size * _BOX_PAD_V_RATIO
+        box_top_abs = box_bottom_abs - box_h
+
+        box_x = (video_width - box_w) / 2.0
+        box_x = min(max(box_x, 0.0), max(video_width - box_w, 0.0))
+        box_y = min(max(box_top_abs, 0.0), max(video_height - box_h, 0.0))
+
+        box_specs.append((start, end, int(box_x), int(box_y), int(box_w), int(box_h)))
+
     path.write_text("".join(lines), encoding="utf-8")
+    return box_specs
 
 
-async def burn_subtitles(src: Path, ass: Path, out: Path, target_kbps: Optional[int] = None):
-    """libass 'ass' filtri bilan ASS subtitr faylini videoga hardsub qiladi
-    (stil, fade-in/out va shrift ASS faylning o'zida belgilangan).
+async def burn_subtitles(
+    src: Path,
+    ass: Path,
+    out: Path,
+    target_kbps: Optional[int] = None,
+    box_specs: Optional[list] = None,
+    video_width: Optional[int] = None,
+    video_height: Optional[int] = None,
+):
+    """Avval tekis, shaffof fon-ramkalarni (drawbox, box_specs asosida —
+    har biri faqat o'z subtitr qatori ko'rsatilayotgan vaqt oralig'ida
+    ko'rinadi), so'ng ularning USTIGA libass 'ass' filtri bilan matnni
+    (stil, fade-in/out va shrift ASS faylning o'zida belgilangan)
+    hardsub qiladi.
 
-    MUHIM: "fontsdir" parametri qo'shilgan — bu libass'ga FONTS_DIR
-    ("fonts/" papkasi, bu fayl bilan bir joyda) ichidagi .ttf fayllarni
-    HAM qidirishni buyuradi, tizimga (apt orqali) o'rnatilgan shriftlardan
-    TASHQARI. Shunday qilib, Urbanist kabi apt'da topilmaydigan shriftlar
-    ham, shunchaki .ttf faylini shu papkaga qo'yish orqali, hech qanday
-    qo'shimcha o'rnatishsiz ishlaydi. FONTS_DIR mavjud bo'lmasa (hali
-    hech qanday maxsus shrift qo'shilmagan bo'lsa), bu parametr shunchaki
-    o'tkazib yuboriladi — xatoga olib kelmaydi.
+    MUHIM (fon haqida): ASS'ning o'zidagi BorderStyle=3 (quti) shaffoflikni
+    e'tiborsiz qoldirishi aniqlangani uchun, fon endi ffmpeg'ning
+    "drawbox" filtri bilan chiziladi — bu HAQIQIY alfa-shaffoflikni to'g'ri
+    qo'llaydi (masalan "black@0.38") va chekkalari har doim TEKIS/to'g'ri
+    to'rtburchak (ramka) bo'lib chiqadi, libass'dagi kabi xira/noaniq emas.
+    Ramka o'lchami/joyi aniq shrift metrikasi o'rniga taxminiy (belgilar
+    soniga asoslangan) hisob-kitob bilan topiladi va haqiqiy ffmpeg
+    render'ida piksel darajasida tekshirilgan nisbatlar bilan kalibrlangan
+    (qarang: write_ass() yonidagi _BOX_* konstantalar) — shuning uchun
+    matn deyarli har doim ramka ichida, markazda chiqadi.
+
+    MUHIM (shrift haqida): "fontsdir" parametri qo'shilgan — bu libass'ga
+    FONTS_DIR ("fonts/" papkasi, bu fayl bilan bir joyda) ichidagi .ttf
+    fayllarni HAM qidirishni buyuradi, tizimga (apt orqali) o'rnatilgan
+    shriftlardan TASHQARI. Shunday qilib, Urbanist kabi apt'da topilmaydigan
+    shriftlar ham, shunchaki .ttf faylini shu papkaga qo'yish orqali, hech
+    qanday qo'shimcha o'rnatishsiz ishlaydi. FONTS_DIR mavjud bo'lmasa (yoki
+    ichida hech qanday .ttf bo'lmasa), bu parametr shunchaki o'tkazib
+    yuboriladi — xatoga olib kelmaydi.
 
     target_kbps berilsa — video shu bitrate'ga yaqin kodlanadi (odatda
     original faylning taxminiy bitrate'i), shunda chiqish fayli asl fayl
     bilan taxminan bir xil hajmda bo'ladi (sifat-asosli CRF rejimi ba'zan
     original'dan sezilarli kattaroq fayl berib yuborishi mumkin edi).
     Berilmasa, standart CRF rejimiga tushadi."""
+    filters = []
+
+    if box_specs:
+        for start, end, x, y, w, h in box_specs:
+            if w <= 0 or h <= 0:
+                continue
+            start_s = f"{start:.3f}"
+            end_s = f"{end:.3f}"
+            # color=black@0.38 -> ~38% xira qora fon, HAQIQIY shaffoflik
+            # bilan (bu libass'ning quti-fonidan farqli o'laroq to'g'ri
+            # ishlaydi), t=fill -> to'liq to'ldirilgan, chekkasiz, TEKIS
+            # to'rtburchak (so'ralgan "tekis ramka" ko'rinishi).
+            filters.append(
+                f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black@0.38:t=fill:"
+                f"enable='between(t,{start_s},{end_s})'"
+            )
+
     ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
-    vf = f"ass='{ass_escaped}'"
-    if os.path.isdir(FONTS_DIR):
+    ass_filter = f"ass='{ass_escaped}'"
+    if os.path.isdir(FONTS_DIR) and any(
+        f.lower().endswith((".ttf", ".otf")) for f in os.listdir(FONTS_DIR)
+    ):
         fontsdir_escaped = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
-        vf += f":fontsdir='{fontsdir_escaped}'"
+        ass_filter += f":fontsdir='{fontsdir_escaped}'"
+    filters.append(ass_filter)
+
+    vf = ",".join(filters)
     cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast"]
 
     if target_kbps and target_kbps > 0:
