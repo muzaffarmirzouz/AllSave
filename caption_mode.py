@@ -41,6 +41,7 @@ Botga ulash (bot.py):
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -103,8 +104,38 @@ def get_asr_pipeline():
     return _asr_pipeline
 
 
+# ESLATMA: avval Titr (caption) rejimi FSM holatiga (CaptionStates,
+# quyida saqlab qolingan — hozircha hech qayerda ishlatilmaydi) bog'liq
+# edi: /caption bosilganda vaqtinchalik "kutish" holati yoqilardi, lekin
+# bu holat /start bosilganda (yoki Railway konteyner qayta ishga
+# tushganda, chunki FSM xotirada saqlanadi) DARHOL o'chib qolardi — shu
+# sabab foydalanuvchi har safar yangi video uchun qaytadan /caption
+# bosishga majbur bo'lardi. Endi bu Logo/Outro kabi BAZADA saqlanadigan,
+# MUSTAQIL doimiy sozlama (caption_enabled) — bir marta yoqilsa, keyingi
+# HAR BIR video/link avtomatik titr bilan qaytariladi, /start bosilsa
+# ham o'chmaydi, faqat /captionoff (yoki mos tugma) bilan o'chadi.
 class CaptionStates(StatesGroup):
     waiting_input = State()
+
+
+def _caption_enabled(message: Message) -> bool:
+    """Foydalanuvchida Titr rejimi (bazada saqlangan, doimiy) yoqilgan-
+    yoqilmaganini tekshiradi. Import funksiya ICHIDA — circular import
+    bo'lmasligi uchun (bot.py caption_router'ni import qilganda, bu modul
+    hali to'liq yuklanib ulgurmagan bo'ladi)."""
+    try:
+        from bot import get_user_caption_enabled
+        return get_user_caption_enabled(message.from_user.id)
+    except ImportError:
+        return False
+
+
+def _set_caption_enabled(user_id: int, enabled: bool) -> None:
+    try:
+        from bot import set_user_caption_enabled
+        set_user_caption_enabled(user_id, enabled)
+    except ImportError:
+        pass
 
 
 # --------------------------------------------------------------- ko'p tillilik
@@ -112,13 +143,15 @@ class CaptionStates(StatesGroup):
 CAPTION_TEXTS = {
     "uz": {
         "mode_on": (
-            "🎬 <b>Titr qo'shish rejimi yoqildi.</b>\n\n"
-            "Menga video fayl yoki video havolasini (Instagram, TikTok va h.k.) yuboring — "
-            "o'zbek tilida bo'lsa, unga avtomatik titr yozib qaytaraman.\n\n"
-            "Istagancha video/link yuborishingiz mumkin — har birida titr qo'shib "
-            "boraman. Oddiy rejimga qaytish uchun /start, faqat shu rejimdan chiqish "
-            "uchun /cancel bosing."
+            "🎬 <b>Titr qo'shish YOQILDI.</b>\n\n"
+            "Endi menga yuboradigan HAR BIR video fayl yoki video havola "
+            "(Instagram, TikTok va h.k.) uchun — o'zbek tilida bo'lsa — "
+            "avtomatik titr yozib qaytaraman. Qayta yoqishning hojati yo'q, "
+            "bu doimiy sozlama.\n\n"
+            "O'chirish uchun: /captionoff"
         ),
+        "mode_off": "🚫 Titr qo'shish o'chirildi. Endi videolar titrsiz (oddiy) yuboriladi.",
+        "already_off": "Titr qo'shish allaqachon o'chirilgan edi.",
         "cancelled": "Bekor qilindi.",
         "too_large": "Video juda katta ({max}MB dan oshmasin).",
         "downloading": "⏳ Video yuklab olinmoqda...",
@@ -135,17 +168,19 @@ CAPTION_TEXTS = {
         "burning": "🎞 Titr videoga yozilmoqda...",
         "burn_failed": "❌ Titr yozishda xatolik yuz berdi.",
         "uploading": "📤 Yuborilmoqda...",
-        "done_caption": "✅ Tayyor! Bu videoga {bot} orqali titr yozib berildi.\n\nYana video/link yuborishingiz mumkin, yoki /start bilan oddiy rejimga qayting.",
+        "done_caption": "✅ Tayyor! Bu videoga {bot} orqali titr yozib berildi.\n\nTitr qo'shish hali ham YOQILGAN — keyingi videolarga ham avtomatik qo'shiladi. O'chirish uchun /captionoff.",
     },
     "ru": {
         "mode_on": (
-            "🎬 <b>Режим добавления субтитров включён.</b>\n\n"
-            "Отправьте мне видеофайл или ссылку на видео (Instagram, TikTok и т.д.) — "
-            "если видео на узбекском языке, автоматически добавлю субтитры.\n\n"
-            "Можете отправлять сколько угодно видео/ссылок — буду добавлять субтитры "
-            "к каждому. Чтобы вернуться в обычный режим — /start, чтобы выйти только "
-            "из этого режима — /cancel."
+            "🎬 <b>Добавление субтитров ВКЛЮЧЕНО.</b>\n\n"
+            "Теперь к КАЖДОМУ видеофайлу или ссылке на видео (Instagram, "
+            "TikTok и т.д.), которые вы мне отправите — если видео на "
+            "узбекском — автоматически добавлю субтитры. Включать заново "
+            "не нужно, это постоянная настройка.\n\n"
+            "Чтобы выключить: /captionoff"
         ),
+        "mode_off": "🚫 Добавление субтитров выключено. Теперь видео отправляются без субтитров.",
+        "already_off": "Добавление субтитров уже было выключено.",
         "cancelled": "Отменено.",
         "too_large": "Видео слишком большое (не более {max}МБ).",
         "downloading": "⏳ Скачиваю видео...",
@@ -162,17 +197,18 @@ CAPTION_TEXTS = {
         "burning": "🎞 Добавляю субтитры на видео...",
         "burn_failed": "❌ Произошла ошибка при добавлении субтитров.",
         "uploading": "📤 Отправляю...",
-        "done_caption": "✅ Готово! Субтитры на это видео добавлены через {bot}.\n\nМожете отправить ещё видео/ссылку, или вернуться в обычный режим через /start.",
+        "done_caption": "✅ Готово! Субтитры на это видео добавлены через {bot}.\n\nДобавление субтитров всё ещё ВКЛЮЧЕНО — к следующим видео тоже добавится автоматически. Чтобы выключить — /captionoff.",
     },
     "en": {
         "mode_on": (
-            "🎬 <b>Subtitle mode enabled.</b>\n\n"
-            "Send me a video file or a video link (Instagram, TikTok, etc.) — "
-            "if the video is in Uzbek, I'll add subtitles automatically.\n\n"
-            "You can send as many videos/links as you like — I'll add subtitles to "
-            "each one. To return to normal mode, use /start; to exit just this mode, "
-            "use /cancel."
+            "🎬 <b>Subtitles ENABLED.</b>\n\n"
+            "Now EVERY video file or video link (Instagram, TikTok, etc.) you "
+            "send me — if it's in Uzbek — will automatically get subtitles "
+            "added. No need to turn it on again, this is a persistent setting.\n\n"
+            "To turn off: /captionoff"
         ),
+        "mode_off": "🚫 Subtitles disabled. Videos will now be sent without subtitles.",
+        "already_off": "Subtitles were already disabled.",
         "cancelled": "Cancelled.",
         "too_large": "The video is too large (must be under {max}MB).",
         "downloading": "⏳ Downloading video...",
@@ -186,7 +222,7 @@ CAPTION_TEXTS = {
         "burning": "🎞 Adding subtitles to the video...",
         "burn_failed": "❌ An error occurred while adding subtitles.",
         "uploading": "📤 Uploading...",
-        "done_caption": "✅ Done! Subtitles were added to this video via {bot}.\n\nYou can send another video/link, or return to normal mode with /start.",
+        "done_caption": "✅ Done! Subtitles were added to this video via {bot}.\n\nSubtitles are still ENABLED — they'll be added to your next videos automatically too. To turn off, use /captionoff.",
     },
 }
 
@@ -220,7 +256,11 @@ def ct(key: str, lang: str, **kwargs) -> str:
 
 @caption_router.message(Command("caption"))
 async def cmd_caption(message: Message, state: FSMContext):
-    await state.set_state(CaptionStates.waiting_input)
+    """Titr qo'shishni YOQADI — bu endi doimiy (bazada saqlanadigan)
+    sozlama, FSM "rejim" EMAS. Bir marta yoqilsa, keyingi HAR BIR
+    video/link'ga avtomatik titr qo'shiladi, /start bosilganda ham
+    o'chmaydi. O'chirish uchun /captionoff kerak."""
+    _set_caption_enabled(message.from_user.id, True)
     lang = get_lang(message.from_user.id)
     await message.answer(ct("mode_on", lang), parse_mode="HTML")
 
@@ -231,8 +271,22 @@ async def cb_caption_mode(callback: CallbackQuery, state: FSMContext):
     await cmd_caption(callback.message, state)
 
 
-@caption_router.message(Command("cancel"), CaptionStates.waiting_input)
+@caption_router.message(Command("captionoff"))
+async def cmd_captionoff(message: Message, state: FSMContext):
+    """Titr qo'shishni o'chiradi (doimiy sozlamani False qiladi)."""
+    lang = get_lang(message.from_user.id)
+    was_on = _caption_enabled(message)
+    _set_caption_enabled(message.from_user.id, False)
+    await state.clear()
+    await message.answer(ct("mode_off" if was_on else "already_off", lang))
+
+
+@caption_router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
+    """/cancel — asosan eski /setlogo va h.k. kabi vaqtinchalik FSM
+    jarayonlarini bekor qilish uchun qoldirilgan. Titr endi FSM rejimi
+    emasligi sababli, buni o'chirish uchun ATAYLAB o'zgartirmaydi —
+    buning uchun /captionoff kerak."""
     await state.clear()
     lang = get_lang(message.from_user.id)
     await message.answer(ct("cancelled", lang))
@@ -240,7 +294,18 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
 # ---------------------------------------------------------------- video kelsa
 
-@caption_router.message(CaptionStates.waiting_input, F.video | F.document)
+def _is_video_document(message: Message) -> bool:
+    """Hujjat (document) sifatida yuborilgan faylning aynan VIDEO
+    ekanligini (mime_type orqali) tekshiradi. MUHIM: bu tekshiruv
+    cookies.txt (matn fayli) va logo GIF/WEBM fayllarini Titr rejimi
+    tomonidan tasodifan "video" sifatida ushlab qolinishining oldini
+    oladi — chunki Titr endi DOIMIY yoqilgan bo'lishi mumkin (FSM
+    "rejim" emas), shuning uchun bu handler har doim faol bo'ladi."""
+    doc = message.document
+    return bool(doc and (doc.mime_type or "").startswith("video/"))
+
+
+@caption_router.message(lambda m: _caption_enabled(m) and bool(m.video or _is_video_document(m)))
 async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
     lang = get_lang(message.from_user.id)
     media = message.video or message.document
@@ -257,18 +322,27 @@ async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
         await bot.download_file(tg_file.file_path, destination=src_path)
         await process_and_reply(message, status, src_path, tmp, lang)
 
-    # ESLATMA: bu yerda ATAYLAB state.clear() chaqirilmaydi — rejim
-    # davom etadi, shunda foydalanuvchi ketma-ket bir nechta video
-    # yuborsa ham har birida titr qo'shiladi. Rejimdan chiqish uchun
-    # /start (oddiy rejimga qaytaradi) yoki /cancel kerak.
+    # Titr rejimi DOIMIY sozlama — hech narsa o'chirilmaydi, keyingi
+    # video/link ham avtomatik titr bilan qaytadi. O'chirish uchun
+    # /captionoff kerak.
 
 
 # ---------------------------------------------------------------- link kelsa
 
-@caption_router.message(CaptionStates.waiting_input, F.text.startswith("http"))
+# ESLATMA: avval bu yerda F.text.startswith("http") ishlatilgan edi — bu
+# katta-kichik harfga sezgir va havola matn boshida (pozitsiya 0) bo'lishini
+# talab qilardi (masalan "mana: https://..." kabi xabarlarni tutmay
+# qolardi). bot.py'dagi asosiy havola aniqlash bilan bir xil, matn ICHIDA
+# istalgan joyda bo'lgan havolani ham (katta-kichik harfdan qat'iy nazar)
+# topadigan regex'ga o'tkazildi.
+CAPTION_URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+@caption_router.message(F.text.regexp(r"(?i)https?://\S+"), lambda m: _caption_enabled(m))
 async def handle_link_input(message: Message, state: FSMContext):
     lang = get_lang(message.from_user.id)
-    url = message.text.strip()
+    match = CAPTION_URL_IN_TEXT_RE.search(message.text)
+    url = match.group(0) if match else message.text.strip()
     status = await message.answer(ct("downloading", lang))
 
     with tempfile.TemporaryDirectory() as tmp_str:
@@ -280,16 +354,20 @@ async def handle_link_input(message: Message, state: FSMContext):
             return
         await process_and_reply(message, status, src_path, tmp, lang)
 
-    # ESLATMA: state.clear() ATAYLAB chaqirilmaydi — rejim davom etadi
-    # (muvaffaqiyatli bo'lsa ham, xato bo'lsa ham), shunda foydalanuvchi
-    # qayta urinib ko'rishi yoki boshqa video/link yuborishi mumkin.
-    # Rejimdan chiqish uchun /start yoki /cancel kerak.
+    # Titr rejimi DOIMIY sozlama — muvaffaqiyatli bo'lsa ham, xato bo'lsa
+    # ham hech narsa o'chirilmaydi, foydalanuvchi qayta urinib ko'rishi
+    # yoki boshqa video/link yuborishi mumkin. O'chirish uchun
+    # /captionoff kerak.
 
-
-@caption_router.message(CaptionStates.waiting_input, F.text, ~F.text.startswith("/"))
-async def handle_unrecognized_input(message: Message):
-    lang = get_lang(message.from_user.id)
-    await message.answer(ct("unrecognized", lang))
+# ESLATMA: avval bu yerda, Titr FSM "rejimida" bo'lganda, video/link
+# bo'lmagan har qanday matnni "tushunarsiz" deb javob qaytaradigan
+# handler bor edi. Titr endi doimiy (orqa fonda) sozlama bo'lgani uchun
+# (FSM rejimi emas), bunday handler endi noto'g'ri bo'lardi — aks holda
+# foydalanuvchi Titr yoqilgan paytda yuborgan HAR QANDAY boshqa matn
+# xabari (masalan admin buyrug'i yoki shunchaki yozishma) ushlab qolinib,
+# botning boshqa funksiyalariga yetib bormay qolardi. Shuning uchun olib
+# tashlandi — Titr endi FAQAT video va havolalarga ishlov beradi, boshqa
+# matnlar odatdagidek bot.py'ning qolgan handlerlariga o'tadi.
 
 
 # ----------------------------------------------------------------- yordamchi
@@ -338,9 +416,19 @@ async def download_video(url: str, output_path: str) -> bool:
         except Exception as e:
             logger.warning(f"ImpersonateTarget sozlashda xato (o'tkazib yuborildi): {e}")
 
-    def _sync_download():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    def _sync_download(opts):
+        with yt_dlp.YoutubeDL(opts) as ydl:
             ydl.download([url])
+
+    def _is_valid_download(path: str) -> bool:
+        """Fayl mavjud bo'lishi YETARLI EMAS — yt-dlp ba'zan xato
+        o'rtasida chala/bo'sh (0 bayt yoki juda kichik) fayl qoldirib
+        ketadi, bu esa keyinchalik ffmpeg'da "moov atom not found" kabi
+        xatoga olib keladi. Shuning uchun fayl hajmini ham tekshiramiz."""
+        try:
+            return os.path.exists(path) and os.path.getsize(path) > 10_000
+        except OSError:
+            return False
 
     # Instagram sessiyasini (bot.py bilan BIR XIL cookie/akkaunt) haddan
     # tashqari tez-tez so'rovlardan asrash uchun — bot.py'dagi umumiy
@@ -353,13 +441,59 @@ async def download_video(url: str, output_path: str) -> bool:
         except ImportError:
             pass
 
-    try:
-        await asyncio.to_thread(_sync_download)
-    except Exception as e:
-        logger.error(f"yt-dlp xatosi: {e}")
-        return False
+    json_error_patterns = ("failed to parse json", "jsondecodeerror", "expecting value")
+    last_error = None
 
-    return os.path.exists(output_path)
+    # Vaqtinchalik xatolarda (Instagram ba'zan bir zumga bo'sh/noto'g'ri
+    # javob qaytaradi) 3 martagacha qayta urinamiz — asosiy bot (bot.py)
+    # dagi _download_with_retry bilan bir xil mantiq.
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            await asyncio.to_thread(_sync_download, ydl_opts)
+            if _is_valid_download(output_path):
+                return True
+            last_error = RuntimeError("yuklangan fayl bo'sh yoki buzuq (0 bayt/juda kichik)")
+        except Exception as e:
+            last_error = e
+
+        err_text = str(last_error).lower()
+        if attempt < attempts:
+            logger.warning(f"/caption yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {last_error}")
+            await asyncio.sleep(4 * attempt)
+            continue
+
+        # Oxirgi urinish ham muvaffaqiyatsiz: Instagram uchun, cookie
+        # (login) sessiyasi bilan "JSON parse" xatosi yoki bo'sh fayl
+        # chiqsa — bu ko'pincha o'sha sessiyaning cheklanganini anglatadi.
+        # Oxirgi chora sifatida anonim (cookie'siz) urinib ko'ramiz — ochiq
+        # postlar ko'pincha mehmon sifatida muammosiz yuklanadi.
+        if (
+            "instagram.com" in url
+            and ydl_opts.get("cookiefile")
+            and (any(p in err_text for p in json_error_patterns) or "bo'sh yoki buzuq" in err_text)
+        ):
+            logger.warning("Cookie sessiyasi bilan hammasi muvaffaqiyatsiz — anonim (cookie'siz) urinib ko'ramiz...")
+            anon_opts = dict(ydl_opts)
+            anon_opts.pop("cookiefile", None)
+            try:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                await asyncio.to_thread(_sync_download, anon_opts)
+                if _is_valid_download(output_path):
+                    logger.info("Anonim (cookie'siz) urinish MUVAFFAQIYATLI bo'ldi.")
+                    return True
+                logger.error("Anonim urinish ham bo'sh/buzuq fayl berdi.")
+            except Exception as e2:
+                logger.error(f"Anonim urinish ham muvaffaqiyatsiz: {e2}")
+            return False
+        else:
+            logger.error(f"yt-dlp xatosi: {last_error}")
+            return False
+
+    return False
 
 
 async def process_and_reply(message: Message, status: Message, src_path: Path, tmp: Path, lang: str = "uz"):
@@ -546,13 +680,14 @@ def write_ass(
     path: Path,
     video_width: int,
     video_height: int,
-    font_name: str = "Noto Sans",
+    font_name: str = "Montserrat",
     fade_in_ms: int = 250,
     fade_out_ms: int = 150,
 ):
-    """SRT o'rniga to'liq ASS fayl yasaydi — bu orqa fonsiz (faqat nozik
-    qora outline bilan) va har qator sekin paydo bo'ladigan (fade-in)
-    subtitrlarga imkon beradi (bular SRT formatida ishlamaydi).
+    """SRT o'rniga to'liq ASS fayl yasaydi — bu zamonaviy (Montserrat)
+    shrift, har qator ortida BILINAR-BILINMAS (yarim shaffof, juda nozik)
+    qora fon va sekin paydo bo'ladigan (fade-in) subtitrlarga imkon
+    beradi (bular SRT formatida ishlamaydi).
 
     video_width/video_height — ASS faylining "etalon o'lchami"
     (PlayResX/PlayResY) videoning HAQIQIY o'lchamiga tenglashtiriladi,
@@ -561,8 +696,8 @@ def write_ass(
     (~4.2%) hisoblanadi, shunda istalgan o'lchamdagi videoda mutanosib
     chiqadi.
 
-    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Noto Sans"
-    uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-noto" ni
+    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Montserrat"
+    uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-montserrat" ni
     qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
     # ESLATMA: gorizontal (16:9 kabi, kenglik balandlikdan katta) videolar
     # ekranda ko'rsatilganda balandligi kichikroq bo'lib chiqadi (masalan
@@ -574,6 +709,9 @@ def write_ass(
     font_ratio = 0.062 if is_landscape else 0.032
     font_size = max(16, int(video_height * font_ratio))
     margin_v = int(video_height * 0.34)
+    # Fon (box) matn atrofidagi "yostiqcha" (padding) — BorderStyle=3'da
+    # "Outline" maydoni shuni anglatadi (oddiy chiziq qalinligi emas).
+    box_padding = max(6, int(font_size * 0.22))
 
     header = (
         "[Script Info]\n"
@@ -586,12 +724,16 @@ def write_ass(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=1 -> orqa
-        # fon (quti) YO'Q, faqat outline+shadow. Outline qalinligi ham
-        # video o'lchamiga nisbatan hisoblanadi (juda ingichka/qalin
-        # bo'lib qolmasligi uchun).
+        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=3 -> matn
+        # ortida YAXLIT FON (quti) chiziladi — BackColour'ning birinchi ikki
+        # heksa-raqami (&HCC......) ALFA (shaffoflik): 00=butunlay tiniq
+        # (ko'rinadi), FF=butunlay shaffof (ko'rinmaydi). &HCC (~80%
+        # shaffof, ~20% xiralik) — fon "bilinar-bilinmas", juda nozik
+        # bo'lishi uchun tanlangan. "Outline" maydoni endi chiziq
+        # qalinligi emas, fonning matn atrofidagi yostiqcha (padding)
+        # kengligini bildiradi.
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
-        f"&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{max(2, font_size // 12)},0,"
+        f"&H00000000,&HCC000000,-1,0,0,0,100,100,0,0,3,{box_padding},0,"
         f"2,20,20,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
