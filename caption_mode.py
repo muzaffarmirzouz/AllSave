@@ -36,6 +36,13 @@ Botga ulash (bot.py):
      foydalanadi)
      ESLATMA: torch o'rnatilishi build vaqtini va konteyner hajmini
      sezilarli oshiradi (yuzlab MB).
+  6) Titr SHRIFTI (standart: Urbanist) uchun — bu fayl bilan BIR PAPKADA
+     "fonts/" nomli papka yarating va unga Urbanist shrift faylini (masalan
+     "Urbanist-VariableFont_wght.ttf", yoki alohida "Urbanist-Regular.ttf"
+     + "Urbanist-Bold.ttf") joylang. Hech qanday apt paket yoki tizimga
+     o'rnatish SHART EMAS — ffmpeg "fontsdir" orqali shu papkadan
+     to'g'ridan-to'g'ri o'qiydi (pastdagi burn_subtitles() funksiyasiga
+     qarang). Fayl topilmasa, ffmpeg/libass standart shriftga tushadi.
 """
 
 import asyncio
@@ -61,6 +68,14 @@ caption_router = Router(name="caption_mode")
 
 MAX_VIDEO_SECONDS = int(os.getenv("CAPTION_MAX_SECONDS", "120"))  # 2 daqiqa
 MAX_FILE_MB = 200
+
+# Titr shrifti endi apt orqali TIZIMGA o'rnatilgan shriftga EMAS, balki
+# to'g'ridan-to'g'ri LOYIHA ICHIDAGI fayl(lar)ga tayanadi — "fonts/" papkasi
+# (bu fayl bilan bir joyda). Bu Railway'da apt paket qo'shish/qidirish
+# muammolaridan butunlay qutqaradi: shrift .ttf fayli repo bilan birga
+# keladi va ffmpeg/libass uni "fontsdir" orqali to'g'ridan-to'g'ri topadi.
+FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+CAPTION_FONT_NAME = os.getenv("CAPTION_FONT_NAME", "Urbanist")
 
 _asr_pipeline = None
 _asr_lock = threading.Lock()
@@ -695,14 +710,25 @@ def write_ass(
     path: Path,
     video_width: int,
     video_height: int,
-    font_name: str = "Montserrat",
+    font_name: str = CAPTION_FONT_NAME,
     fade_in_ms: int = 250,
     fade_out_ms: int = 150,
 ):
-    """SRT o'rniga to'liq ASS fayl yasaydi — bu zamonaviy (Montserrat)
-    shrift, har qator ortida BILINAR-BILINMAS (yarim shaffof, juda nozik)
-    qora fon va sekin paydo bo'ladigan (fade-in) subtitrlarga imkon
+    """SRT o'rniga to'liq ASS fayl yasaydi — bu zamonaviy (Urbanist)
+    shrift, har bir harf ortida BILINAR-BILINMAS, yumshoq (xira, shaffof)
+    "halo" fon va sekin paydo bo'ladigan (fade-in) subtitrlarga imkon
     beradi (bular SRT formatida ishlamaydi).
+
+    ESLATMA (muhim texnik tafsilot): avval bu yerda ASS'ning "BorderStyle=3"
+    (to'rtburchak QUTI fon) rejimi ishlatilgan edi, lekin amalda (haqiqiy
+    ffmpeg bilan piksel darajasida tekshirilganda) aniqlandiki — bu
+    muhitdagi libass kutubxonasi quti foni uchun SHAFFOFLIKNI BUTUNLAY
+    e'tiborsiz qoldiradi (qancha shaffof qilib belgilamang, baribir
+    100% qattiq/tiniq bo'lib chiqadi). Shuning uchun o'rniga matnning
+    o'ziga yumshoq, xira (blur) va HAQIQATAN shaffof "halo" (soyaga
+    o'xshash yumshoq kontur) beriladigan usulga o'tildi — bu usul
+    shaffoflikni to'g'ri qo'llaydi va "bilinar-bilinmas fon" talabiga
+    ancha yaqinroq, zamonaviy ko'rinish beradi.
 
     video_width/video_height — ASS faylining "etalon o'lchami"
     (PlayResX/PlayResY) videoning HAQIQIY o'lchamiga tenglashtiriladi,
@@ -711,9 +737,10 @@ def write_ass(
     (~4.2%) hisoblanadi, shunda istalgan o'lchamdagi videoda mutanosib
     chiqadi.
 
-    ESLATMA: font_name konteynerda o'rnatilgan bo'lishi kerak. "Montserrat"
-    uchun Railway'da RAILPACK_DEPLOY_APT_PACKAGES ga "fonts-montserrat" ni
-    qo'shing (ffmpeg bilan bir qatorda, vergul bilan ajratib)."""
+    ESLATMA: font_name tizimga (apt orqali) o'rnatilgan bo'lishi SHART
+    EMAS — FONTS_DIR ("fonts/" papkasi) ichidagi .ttf fayl burn_subtitles()
+    funksiyasida ffmpeg'ning "fontsdir" parametri orqali to'g'ridan-to'g'ri
+    ulanadi. Shunchaki o'sha papkaga mos .ttf faylni qo'yish kifoya."""
     # ESLATMA: gorizontal (16:9 kabi, kenglik balandlikdan katta) videolar
     # ekranda ko'rsatilganda balandligi kichikroq bo'lib chiqadi (masalan
     # Telegram uni kenglik bo'yicha moslashtiradi), shuning uchun bir xil
@@ -724,9 +751,11 @@ def write_ass(
     font_ratio = 0.062 if is_landscape else 0.032
     font_size = max(16, int(video_height * font_ratio))
     margin_v = int(video_height * 0.34)
-    # Fon (box) matn atrofidagi "yostiqcha" (padding) — BorderStyle=3'da
-    # "Outline" maydoni shuni anglatadi (oddiy chiziq qalinligi emas).
-    box_padding = max(6, int(font_size * 0.22))
+    # "Halo" kengligi (matn konturi atrofidagi yumshoq fon kengligi) va
+    # uning xiraligi (blur) — ikkalasi ham shrift o'lchamiga nisbatan
+    # hisoblanadi, shunda istalgan video o'lchamida mutanosib chiqadi.
+    halo_width = max(8, int(font_size * 0.30))
+    halo_blur = max(2, int(font_size * 0.035))
 
     header = (
         "[Script Info]\n"
@@ -739,16 +768,16 @@ def write_ass(
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=3 -> matn
-        # ortida YAXLIT FON (quti) chiziladi — BackColour'ning birinchi ikki
-        # heksa-raqami (&HCC......) ALFA (shaffoflik): 00=butunlay tiniq
-        # (ko'rinadi), FF=butunlay shaffof (ko'rinmaydi). &HCC (~80%
-        # shaffof, ~20% xiralik) — fon "bilinar-bilinmas", juda nozik
-        # bo'lishi uchun tanlangan. "Outline" maydoni endi chiziq
-        # qalinligi emas, fonning matn atrofidagi yostiqcha (padding)
-        # kengligini bildiradi.
+        # Bold=-1 -> qalin (TikTok-uslubidagi) matn. BorderStyle=1 -> QUTI
+        # YO'Q, faqat kontur (outline) + soya — lekin konturni juda QALIN
+        # (halo_width) va YUMShOQ (pastdagi {\blur} orqali) qilib, uni
+        # "fon" o'rnida ishlatamiz. OutlineColour'ning birinchi ikki
+        # heksa-raqami (&HC8......) ALFA (shaffoflik): 00=butunlay tiniq,
+        # FF=butunlay shaffof (ko'rinmaydi). &HC8 (~78% shaffof, ~22%
+        # xiralik) — HAQIQATAN "bilinar-bilinmas", juda nozik bo'lishi
+        # uchun tanlangan va piksel darajasida tekshirilgan.
         f"Style: Default,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
-        f"&H00000000,&HCC000000,-1,0,0,0,100,100,0,0,3,{box_padding},0,"
+        f"&HC8000000,&H00000000,-1,0,0,0,100,100,0,0,1,{halo_width},0,"
         f"2,20,20,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -762,9 +791,11 @@ def write_ass(
         start_ts = format_ass_timestamp(start)
         end_ts = format_ass_timestamp(end)
         # {\fad(in_ms,out_ms)} -> qator sekin paydo bo'lib, sekin yo'qoladi.
+        # {\blur} -> konturni yumshatadi, shunda u qattiq chiziq emas,
+        # yumshoq "halo"/soya ko'rinishida chiqadi.
         lines.append(
             f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,"
-            f"{{\\fad({fade_in_ms},{fade_out_ms})}}{text}\n"
+            f"{{\\fad({fade_in_ms},{fade_out_ms})\\blur{halo_blur}}}{text}\n"
         )
     path.write_text("".join(lines), encoding="utf-8")
 
@@ -773,6 +804,15 @@ async def burn_subtitles(src: Path, ass: Path, out: Path, target_kbps: Optional[
     """libass 'ass' filtri bilan ASS subtitr faylini videoga hardsub qiladi
     (stil, fade-in/out va shrift ASS faylning o'zida belgilangan).
 
+    MUHIM: "fontsdir" parametri qo'shilgan — bu libass'ga FONTS_DIR
+    ("fonts/" papkasi, bu fayl bilan bir joyda) ichidagi .ttf fayllarni
+    HAM qidirishni buyuradi, tizimga (apt orqali) o'rnatilgan shriftlardan
+    TASHQARI. Shunday qilib, Urbanist kabi apt'da topilmaydigan shriftlar
+    ham, shunchaki .ttf faylini shu papkaga qo'yish orqali, hech qanday
+    qo'shimcha o'rnatishsiz ishlaydi. FONTS_DIR mavjud bo'lmasa (hali
+    hech qanday maxsus shrift qo'shilmagan bo'lsa), bu parametr shunchaki
+    o'tkazib yuboriladi — xatoga olib kelmaydi.
+
     target_kbps berilsa — video shu bitrate'ga yaqin kodlanadi (odatda
     original faylning taxminiy bitrate'i), shunda chiqish fayli asl fayl
     bilan taxminan bir xil hajmda bo'ladi (sifat-asosli CRF rejimi ba'zan
@@ -780,6 +820,9 @@ async def burn_subtitles(src: Path, ass: Path, out: Path, target_kbps: Optional[
     Berilmasa, standart CRF rejimiga tushadi."""
     ass_escaped = str(ass).replace("\\", "/").replace(":", "\\:")
     vf = f"ass='{ass_escaped}'"
+    if os.path.isdir(FONTS_DIR):
+        fontsdir_escaped = FONTS_DIR.replace("\\", "/").replace(":", "\\:")
+        vf += f":fontsdir='{fontsdir_escaped}'"
     cmd = ["ffmpeg", "-y", "-i", str(src), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast"]
 
     if target_kbps and target_kbps > 0:
