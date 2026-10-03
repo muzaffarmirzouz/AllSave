@@ -108,6 +108,46 @@ async def _throttle_instagram():
             await asyncio.sleep(wait)
         _ig_last_request_ts = asyncio.get_event_loop().time()
 
+
+# Instagram cookie sessiyasi "eskirib" (yoki rate-limit'ga uchrab) qolganda
+# foydalanuvchilar xato xabarini ko'radi, lekin bot egasi buni faqat kimdir
+# shikoyat qilgandan keyin bilib qoladi. Shuning uchun — xuddi shunday xato
+# chiqqanda — bot egasiga (OWNER_CHAT_IDS) AVTOMATIK ogohlantirish yuboriladi,
+# "/setcookies_ig orqali cookie'ni yangilang" degan taklif bilan. Spam
+# bo'lmasligi uchun bu ogohlantirish kamida IG_COOKIE_ALERT_COOLDOWN soniyada
+# bir marta (standart: 6 soat) yuboriladi.
+IG_COOKIE_ALERT_COOLDOWN = float(os.environ.get("IG_COOKIE_ALERT_COOLDOWN_SECONDS", str(6 * 3600)))
+_ig_cookie_alert_lock = asyncio.Lock()
+_ig_last_cookie_alert_ts = 0.0
+
+
+async def _maybe_alert_owner_ig_cookie_issue(bot: Bot, err_text: str):
+    """Instagram "login_required"/rate-limit xatosi chiqqanda chaqiriladi.
+    Cooldown oralig'i o'tgan bo'lsa, OWNER_CHAT_IDS'dagi barcha shaxslarga
+    bitta xabar yuboradi. Xabar yuborishning o'zi xato bersa (masalan bot
+    o'sha foydalanuvchi bilan hali /start bosmagan), jim o'tkazib yuboriladi —
+    bu asosiy oqimni (foydalanuvchiga javob berishni) to'xtatmasligi kerak."""
+    global _ig_last_cookie_alert_ts
+    if not OWNER_CHAT_IDS:
+        return
+    async with _ig_cookie_alert_lock:
+        now = asyncio.get_event_loop().time()
+        if now - _ig_last_cookie_alert_ts < IG_COOKIE_ALERT_COOLDOWN:
+            return
+        _ig_last_cookie_alert_ts = now
+
+    alert_text = (
+        "⚠️ Instagram cookie sessiyasi muammoga uchragan bo'lishi mumkin "
+        "(login/rate-limit xatosi chiqdi).\n\n"
+        f"Texnik tafsilot: {err_text[:300]}\n\n"
+        "Iltimos, /setcookies_ig orqali yangi cookies.txt yuboring."
+    )
+    for owner_id in OWNER_CHAT_IDS:
+        try:
+            await bot.send_message(chat_id=owner_id, text=alert_text)
+        except Exception as e:
+            log.warning(f"Bot egasiga IG cookie ogohlantirishini yuborishda xato (o'tkazib yuborildi): {e}")
+
 # Doimiy (Railway Volume'dagi) papka — DB_PATH bilan bir xil joyda, shuning
 # uchun qayta deploy/restart'da fayllar YO'QOLMAYDI.
 PERSIST_DIR = os.path.dirname(DB_PATH) or "."
@@ -1089,6 +1129,8 @@ def _download_images_gallery_dl_sync(url: str, output_dir: str) -> list:
     cmd = ["gallery-dl", "-D", output_dir, "--no-mtime", "--write-metadata"]
     if IG_COOKIES_FILE:
         cmd += ["--cookies", IG_COOKIES_FILE]
+    if PROXY_URL:
+        cmd += ["--proxy", PROXY_URL]
     cmd.append(url)
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -1138,6 +1180,8 @@ def _download_media_gallery_dl_sync(url: str, output_dir: str) -> list:
     cmd = ["gallery-dl", "-D", output_dir, "--no-mtime", "--write-metadata"]
     if IG_COOKIES_FILE:
         cmd += ["--cookies", IG_COOKIES_FILE]
+    if PROXY_URL:
+        cmd += ["--proxy", PROXY_URL]
     cmd.append(url)
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -2068,6 +2112,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 # "tizimga kirish talab qilinadi" xabarini ko'rsatamiz.
                 if "login" in str(ge).lower():
                     await safe_edit(status, t("login_required", lang))
+                    await _maybe_alert_owner_ig_cookie_issue(bot, str(ge))
                     return
             await safe_edit(status, t("generic_error", lang))
             return
@@ -2118,12 +2163,15 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 log.warning(f"gallery-dl zaxira usuli (JSON xatosi uchun) ham ishlamadi: {ge}")
                 if "login" in str(ge).lower():
                     await safe_edit(status, t("login_required", lang))
+                    await _maybe_alert_owner_ig_cookie_issue(bot, str(ge))
                     return
             await safe_edit(status, t("generic_error", lang))
             return
 
         if "login" in err_text or "rate-limit" in err_text or "restricted" in err_text:
             await safe_edit(status, t("login_required", lang))
+            if "instagram.com" in url:
+                await _maybe_alert_owner_ig_cookie_issue(bot, str(e))
         else:
             await safe_edit(status, t("generic_error", lang))
     except Exception as e:
