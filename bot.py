@@ -1249,19 +1249,31 @@ async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 3) -> d
                 await asyncio.sleep(4 * attempt)
             elif (
                 "instagram.com" in url
-                and ydl_opts.get("cookiefile")
-                and any(p in err_text for p in json_error_patterns)
+                and any(p in err_text for p in json_error_patterns + ("http error 400", "bad request"))
             ):
-                log.warning("Cookie (login) sessiyasi bilan hammasi muvaffaqiyatsiz — anonim (cookie'siz) urinib ko'ramiz...")
-                anon_opts = dict(ydl_opts)
-                anon_opts.pop("cookiefile", None)
-                try:
-                    result = await asyncio.to_thread(_download_video_sync, url, anon_opts)
-                    log.info("Anonim (cookie'siz) urinish MUVAFFAQIYATLI bo'ldi.")
-                    return result
-                except yt_dlp.utils.DownloadError as e2:
-                    log.warning(f"Anonim urinish ham muvaffaqiyatsiz: {e2}")
-                    last_error = e2
+                # "HTTP Error 400" ko'pincha cookie sessiyasi boshqa IP'dan
+                # olinib, so'rov proxy IP'sidan ketayotganda chiqadi. Shuning
+                # uchun ketma-ket variantlarni sinaymiz:
+                #   1) cookie'siz (anonim), proxy bilan
+                #   2) cookie bilan, proxy'siz
+                variants = []
+                if ydl_opts.get("cookiefile"):
+                    o = dict(ydl_opts)
+                    o.pop("cookiefile", None)
+                    variants.append(("anonim (cookie'siz)", o))
+                if ydl_opts.get("proxy"):
+                    o = dict(ydl_opts)
+                    o.pop("proxy", None)
+                    variants.append(("proxy'siz", o))
+                for label, opts in variants:
+                    log.warning(f"Asosiy urinishlar muvaffaqiyatsiz — {label} variant sinab ko'riladi...")
+                    try:
+                        result = await asyncio.to_thread(_download_video_sync, url, opts)
+                        log.info(f"{label} variant MUVAFFAQIYATLI bo'ldi.")
+                        return result
+                    except yt_dlp.utils.DownloadError as e2:
+                        log.warning(f"{label} variant ham muvaffaqiyatsiz: {e2}")
+                        last_error = e2
                 raise last_error
             else:
                 raise
@@ -1317,10 +1329,17 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     import subprocess
 
     xy = LOGO_POSITIONS.get(position, LOGO_POSITIONS["bottom_center"])
+
+    # MUHIM: Telegram video-stikerlari (.webm) VP9 + ALFA (shaffoflik) bilan
+    # saqlanadi. ffmpeg'ning standart ichki "vp9" dekoderi alfa kanalni
+    # O'QIMAYDI — shaffof joylar QORA to'rtburchak bo'lib chiqadi. Shaffoflikni
+    # saqlash uchun .webm'ni "libvpx-vp9" dekoderi bilan o'qish shart.
+    logo_decoder = ["-c:v", "libvpx-vp9"] if logo_file.lower().endswith(".webm") else []
+
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
-        "-stream_loop", "-1", "-i", logo_file,
+        "-stream_loop", "-1", *logo_decoder, "-i", logo_file,
         "-filter_complex",
         # Logo videoning ENI'ga NISBATAN (85%) o'lchamlanadi.
         "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
@@ -1337,6 +1356,14 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0 and logo_decoder:
+        # libvpx-vp9 dekoderi serverda yo'q bo'lsa — oddiy dekoder bilan
+        # (shaffoflik yo'qolishi mumkin, lekin logo baribir qo'yiladi).
+        cmd_fallback = [a for i, a in enumerate(cmd)
+                        if not (a in ("-c:v",) and cmd[i + 1] == "libvpx-vp9")
+                        and a != "libvpx-vp9"]
+        log.warning(f"libvpx-vp9 bilan logo qo'yib bo'lmadi, oddiy dekoderga o'tilmoqda: {result.stderr[-200:]}")
+        result = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg xato: {result.stderr[-500:]}")
 
