@@ -250,10 +250,37 @@ def _find_user_logo(user_id: int) -> str:
 USER_OUTROS_DIR = os.path.join(LOGO_DIR, "outros")
 
 
+OUTRO_LANDSCAPE = "outro_16x9.mp4"
+OUTRO_PORTRAIT = "outro_9x16.mp4"
+OUTRO_LEGACY = "outro.mp4"  # eski (yagona) outro — moslik uchun
+
+
 def _find_user_outro(user_id: int) -> str:
-    """Ma'lum bir foydalanuvchining SHAXSIY outro videosini qidiradi."""
-    p = os.path.join(USER_OUTROS_DIR, str(user_id), "outro.mp4")
-    return p if os.path.exists(p) else None
+    """Foydalanuvchining SHAXSIY outrolaridan birortasi bormi — bo'lsa
+    yo'lini qaytaradi (haqiqiy tanlov _append_outro_sync'da video
+    yo'nalishiga qarab bajariladi)."""
+    d = os.path.join(USER_OUTROS_DIR, str(user_id))
+    for name in (OUTRO_LANDSCAPE, OUTRO_PORTRAIT, OUTRO_LEGACY):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _pick_outro_for_orientation(any_outro_path: str, portrait: bool) -> str:
+    """Video 9:16 (vertikal) bo'lsa 9:16 outro, aks holda (16:9 yoki
+    kvadrat) 16:9 outro. Kerakli turi yo'q bo'lsa — borini ishlatadi."""
+    d = os.path.dirname(any_outro_path)
+    order = (
+        (OUTRO_PORTRAIT, OUTRO_LANDSCAPE, OUTRO_LEGACY)
+        if portrait
+        else (OUTRO_LANDSCAPE, OUTRO_PORTRAIT, OUTRO_LEGACY)
+    )
+    for name in order:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    return any_outro_path
 
 
 LOGO_GIF_FILE = _find_existing_logo()  # bot egasining standart logotipi
@@ -1407,15 +1434,26 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
         fade_dur = min(fade_dur, max(main_duration - 0.1, 0.1))
     offset = max(main_duration - fade_dur, 0.0)
 
+    # Video yo'nalishiga qarab mos outroni tanlaymiz (9:16 yoki 16:9;
+    # kvadrat video -> 16:9).
+    mw, mh, _d = _probe_video_meta_sync(input_path)
+    portrait = bool(mw and mh and mh > mw * 1.05)
+    outro_file = _pick_outro_for_orientation(outro_file, portrait)
+    if mw and mh:
+        W, H = mw - (mw % 2), mh - (mh % 2)
+    else:
+        W, H = (1080, 1920) if portrait else (1920, 1080)
+
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
         "-i", outro_file,
         "-filter_complex",
-        # Outro'ni asosiy videoning aynan o'lchamiga moslashtiramiz.
-        "[1:v][0:v]scale2ref=w=iw:h=ih[outro_v][main_v];"
-        "[main_v]setsar=1,fps=30[main_v2];"
-        "[outro_v]setsar=1,fps=30[outro_v2];"
+        # Outro'ni cho'zmasdan, asosiy video o'lchamiga SIG'DIRAMIZ
+        # (nisbat mos kelmasa — qora chiziqlar bilan).
+        "[0:v]setsar=1,fps=30[main_v2];"
+        f"[1:v]scale={W}:{H}:force_original_aspect_ratio=decrease,"
+        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30[outro_v2];"
         "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[main_a];"
         "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[outro_a];"
         f"[main_v2][outro_v2]xfade=transition=fadeblack:duration={fade_dur:.2f}:offset={offset:.2f}[outv];"
@@ -1535,11 +1573,13 @@ async def cb_logo_off(callback: CallbackQuery, state: FSMContext):
 async def _remove_user_outro(user_id: int) -> bool:
     """Foydalanuvchining shaxsiy outro videosini o'chiradi. Biror narsa
     o'chirilgan bo'lsa True qaytaradi."""
-    p = os.path.join(USER_OUTROS_DIR, str(user_id), "outro.mp4")
-    if os.path.exists(p):
-        os.remove(p)
-        return True
-    return False
+    removed = False
+    for name in (OUTRO_LANDSCAPE, OUTRO_PORTRAIT, OUTRO_LEGACY):
+        p = os.path.join(USER_OUTROS_DIR, str(user_id), name)
+        if os.path.exists(p):
+            os.remove(p)
+            removed = True
+    return removed
 
 
 async def _do_outrooff(user_id: int, lang: str) -> str:
@@ -1784,11 +1824,31 @@ async def handle_outro_upload(message: Message, bot: Bot, state: FSMContext):
     lang = get_user_lang(message.from_user.id) or "uz"
     _awaiting_outro_from.discard(message.from_user.id)
     user_dir = os.path.join(USER_OUTROS_DIR, str(message.from_user.id))
-    new_path = os.path.join(user_dir, "outro.mp4")
+    tmp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_outro_up.mp4")
     try:
         file_info = await bot.get_file(message.video.file_id)
         os.makedirs(user_dir, exist_ok=True)
-        await bot.download_file(file_info.file_path, destination=new_path)
+        await bot.download_file(file_info.file_path, destination=tmp_path)
+        # Yo'nalishni aniqlaymiz: vertikal -> 9:16 uyasi, aks holda 16:9.
+        ow, oh, _d = await asyncio.to_thread(_probe_video_meta_sync, tmp_path)
+        is_portrait = bool(ow and oh and oh > ow * 1.05)
+        slot = OUTRO_PORTRAIT if is_portrait else OUTRO_LANDSCAPE
+        shutil.move(tmp_path, os.path.join(user_dir, slot))
+        # Eski yagona outro endi keraksiz — ikki turli uyaga o'tdi.
+        legacy = os.path.join(user_dir, OUTRO_LEGACY)
+        if os.path.exists(legacy):
+            os.remove(legacy)
+        have_l = os.path.exists(os.path.join(user_dir, OUTRO_LANDSCAPE))
+        have_p = os.path.exists(os.path.join(user_dir, OUTRO_PORTRAIT))
+        kind = "9:16 (vertikal)" if is_portrait else "16:9 (gorizontal)"
+        note = f"\U0001F4CC {kind} outro saqlandi."
+        if have_l and have_p:
+            note += "\nEndi ikkala outro ham bor: bot video formatiga qarab o'zi tanlaydi (kvadrat video uchun 16:9)."
+        else:
+            missing = "16:9 (gorizontal)" if is_portrait else "9:16 (vertikal)"
+            note += f"\n\u2795 Xohlasangiz, {missing} outroni ham yuboring \u2014 hozir shu videoni yuboring. Yubormasangiz, mavjud outro hamma videoga ishlatiladi."
+            _awaiting_outro_from.add(message.from_user.id)
+        await message.answer(note)
         await message.answer(t("outro_saved", lang), parse_mode="HTML", reply_markup=outro_active_keyboard(lang))
         # Outro yangi sozlandi — darhol KEYINGI video HAVOLASI shu outro
         # bilan qaytishi uchun, qayta tugma bosmasdan, rejimni yoqamiz
