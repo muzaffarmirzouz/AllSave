@@ -17,6 +17,7 @@ ruxsatsiz ommaviy tarqatishdan saqlaning.
 import asyncio
 import base64
 import json
+import subprocess
 import logging
 import os
 import re
@@ -1353,6 +1354,7 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
         "-c:a", "copy",
+        "-movflags", "+faststart",
         output_path,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
@@ -1873,6 +1875,64 @@ async def handle_owner_video(message: Message, bot: Bot):
                 os.remove(p)
                 seen.add(p)
 
+def _probe_video_meta_sync(path: str):
+    """(width, height, duration) — aylantirish (rotation) hisobga olingan.
+    Xato bo'lsa (None, None, None)."""
+    try:
+        import json as _json
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height:stream_tags=rotate:stream_side_data=rotation:format=duration",
+             "-of", "json", path],
+            capture_output=True, text=True, timeout=30,
+        ).stdout
+        data = _json.loads(out or "{}")
+        st = (data.get("streams") or [{}])[0]
+        w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+        rot = 0
+        try:
+            rot = int(float((st.get("tags") or {}).get("rotate", 0)))
+        except Exception:
+            pass
+        for sd in st.get("side_data_list") or []:
+            if "rotation" in sd:
+                try:
+                    rot = int(float(sd["rotation"]))
+                except Exception:
+                    pass
+        if abs(rot) % 360 in (90, 270):
+            w, h = h, w
+        dur = int(float((data.get("format") or {}).get("duration") or 0))
+        if w <= 0 or h <= 0:
+            return None, None, None
+        return w, h, (dur or None)
+    except Exception:
+        return None, None, None
+
+
+def _faststart_remux_sync(path: str) -> str:
+    """Qayta kodlamasdan moov atomni fayl boshiga ko'chiradi (tez).
+    Telegram o'lcham/formatni to'g'ri aniqlashi uchun kerak."""
+    out = path.rsplit(".", 1)[0] + "_fs.mp4"
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
+             "-c", "copy", "-movflags", "+faststart", out],
+            capture_output=True, timeout=300,
+        )
+        if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
+            os.remove(path)
+            return out
+    except Exception as e:
+        log.warning(f"faststart remux xato: {e}")
+    if os.path.exists(out):
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+    return path
+
+
 def _ensure_telegram_compatible_sync(path: str) -> str:
     """Video kodeki Telegram bilan mos (H.264) emasligini tekshiradi, va
     FAQAT shunday bo'lsa qayta kodlaydi — mos bo'lsa, TEZLIK uchun
@@ -2085,11 +2145,25 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             await safe_edit(status, t("too_large", lang).format(size=size_mb, max=MAX_TELEGRAM_MB))
             return
 
+        if not applied_something:
+            # moov atom fayl oxirida bo'lsa Telegram o'lchamni noto'g'ri
+            # (kvadrat/qora chiziqli) ko'rsatadi — tez remux bilan tuzatamiz.
+            downloaded_path = await asyncio.to_thread(_faststart_remux_sync, downloaded_path)
+
+        vw, vh, vdur = await asyncio.to_thread(_probe_video_meta_sync, downloaded_path)
+        extra = {}
+        if vw and vh:
+            extra.update(width=vw, height=vh)
+        if vdur:
+            extra["duration"] = vdur
+
         await safe_edit(status, t("uploading", lang))
         await bot.send_video(
             chat_id=message.chat.id,
             video=FSInputFile(downloaded_path),
             caption=_build_caption(result),
+            supports_streaming=True,
+            **extra,
         )
         await status.delete()
 
