@@ -1349,10 +1349,17 @@ def _build_image_caption(izoh: str = "") -> str:
     return (izoh + footer)[:1024]
 
 
-try:
-    LOGO_SHOW_SECONDS = float(os.environ.get("LOGO_SHOW_SECONDS", "10"))
-except ValueError:
-    LOGO_SHOW_SECONDS = 10.0
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+# Logo videoning LOGO_START_SECONDS-chi soniyasidan chiqa boshlaydi va
+# LOGO_SHOW_SECONDS soniya turadi, keyin boshqa chiqmaydi.
+LOGO_START_SECONDS = _env_float("LOGO_START_SECONDS", 5.0)
+LOGO_SHOW_SECONDS = _env_float("LOGO_SHOW_SECONDS", 9.0)
 
 
 def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
@@ -1370,18 +1377,15 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     # saqlash uchun .webm'ni "libvpx-vp9" dekoderi bilan o'qish shart.
     logo_decoder = ["-c:v", "libvpx-vp9"] if logo_file.lower().endswith(".webm") else []
 
-    # Logo faqat video BOSHIDA va OXIRIGA yaqin (har safar LOGO_SHOW_SECONDS
-    # soniya) ko'rinadi; oxiridagi nusxa animatsiyasi o'sha paytdan boshlab
-    # qaytadan o'ynaydi. Video juda qisqa bo'lsa — butun video davomida.
+    # Logo LOGO_START_SECONDS dan boshlab LOGO_SHOW_SECONDS soniya ko'rinadi
+    # (animatsiya o'sha paytdan boshlab qaytadan o'ynaydi), keyin chiqmaydi.
+    # Video boshlanish vaqtidan qisqa bo'lsa — logo butun video davomida.
     dur = _probe_duration_sync(input_path)
-    S = LOGO_SHOW_SECONDS
-    if S > 0 and dur > 2 * S + 1:
-        t2 = max(dur - S - 0.3, S)
+    T0, S = LOGO_START_SECONDS, LOGO_SHOW_SECONDS
+    if S > 0 and dur > T0 + 0.5:
         overlay_graph = (
-            "[logo2]split=2[la][lb];"
-            f"[lb]setpts=PTS+{t2:.3f}/TB[lb2];"
-            f"[video][la]overlay={xy}:enable='between(t,0,{S})':shortest=1[v1];"
-            f"[v1][lb2]overlay={xy}:enable='between(t,{t2:.3f},{t2 + S:.3f})':shortest=1"
+            f"[logo2]setpts=PTS+{T0:.3f}/TB[logo3];"
+            f"[video][logo3]overlay={xy}:enable='between(t,{T0:.3f},{T0 + S:.3f})':shortest=1"
         )
     else:
         overlay_graph = f"[video][logo2]overlay={xy}:shortest=1"
