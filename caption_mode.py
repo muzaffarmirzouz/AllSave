@@ -119,6 +119,69 @@ def get_asr_pipeline():
     return _asr_pipeline
 
 
+# --- Xotirani tejash: model bo'sh turganda xotiradan chiqariladi -----------
+# Model (torch + transformers) bir marta yuklansa, bot ishlab turguncha
+# bir necha GB RAM band qilib turardi (Railway xotira uchun daqiqama-daqiqa
+# pul oladi). Endi oxirgi ishlatishdan CAPTION_ASR_IDLE_SECONDS (standart
+# 600 = 10 daqiqa) o'tgach model o'chiriladi; keyingi /caption so'rovida
+# qayta yuklanadi (20-30 soniya sekinroq).
+ASR_IDLE_SECONDS = int(os.getenv("CAPTION_ASR_IDLE_SECONDS", "600"))
+_asr_in_use = 0
+_asr_unload_timer = None
+
+
+def _release_memory_to_os():
+    """Python/torch bo'shatgan xotirani operatsion tizimga qaytaradi."""
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _unload_asr_if_idle():
+    global _asr_pipeline, _asr_unload_timer
+    with _asr_lock:
+        if _asr_in_use > 0:
+            return  # hali ish ketyapti — keyinroq qayta uriniladi
+        if _asr_pipeline is None:
+            return
+        _asr_pipeline = None
+        _asr_unload_timer = None
+    try:
+        import torch
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    _release_memory_to_os()
+    logger.info("ASR modeli bo'sh turgani uchun xotiradan chiqarildi.")
+
+
+def _asr_job_started():
+    global _asr_in_use, _asr_unload_timer
+    with _asr_lock:
+        _asr_in_use += 1
+        if _asr_unload_timer is not None:
+            _asr_unload_timer.cancel()
+            _asr_unload_timer = None
+
+
+def _asr_job_finished():
+    global _asr_in_use, _asr_unload_timer
+    with _asr_lock:
+        _asr_in_use = max(0, _asr_in_use - 1)
+        if _asr_in_use == 0 and ASR_IDLE_SECONDS > 0:
+            if _asr_unload_timer is not None:
+                _asr_unload_timer.cancel()
+            _asr_unload_timer = threading.Timer(ASR_IDLE_SECONDS, _unload_asr_if_idle)
+            _asr_unload_timer.daemon = True
+            _asr_unload_timer.start()
+    _release_memory_to_os()
+
+
 # ESLATMA: avval Titr (caption) rejimi FSM holatiga (CaptionStates,
 # quyida saqlab qolingan — hozircha hech qayerda ishlatilmaydi) bog'liq
 # edi: /caption bosilganda vaqtinchalik "kutish" holati yoqilardi, lekin
@@ -559,14 +622,18 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
                 return
 
             await status.edit_text(ct("transcribing", lang))
-            pipe = get_asr_pipeline()
-            result = await asyncio.to_thread(
-                pipe,
-                str(audio_path),
-                return_timestamps="word",
-                generate_kwargs={"language": "uzbek", "task": "transcribe"},
-                batch_size=8,
-            )
+            _asr_job_started()
+            try:
+                pipe = await asyncio.to_thread(get_asr_pipeline)
+                result = await asyncio.to_thread(
+                    pipe,
+                    str(audio_path),
+                    return_timestamps="word",
+                    generate_kwargs={"language": "uzbek", "task": "transcribe"},
+                    batch_size=int(os.getenv("CAPTION_ASR_BATCH", "4")),
+                )
+            finally:
+                _asr_job_finished()
             words = result.get("chunks") or []
 
             if not words:
