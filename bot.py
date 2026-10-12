@@ -1985,7 +1985,19 @@ async def handle_owner_video(message: Message, bot: Bot):
             current_path = outro_output
             log.info("WMARK: outro qo'shildi")
 
-        await bot.send_video(chat_id=message.chat.id, video=FSInputFile(current_path))
+        _w, _h, _d = await asyncio.to_thread(_probe_video_meta_sync, current_path)
+        _extra = {}
+        if _w and _h:
+            _extra.update(width=_w, height=_h)
+        if _d:
+            _extra["duration"] = _d
+        _thumb = await asyncio.to_thread(_make_thumbnail_sync, current_path)
+        if _thumb:
+            _extra["thumbnail"] = FSInputFile(_thumb)
+        await bot.send_video(
+            chat_id=message.chat.id, video=FSInputFile(current_path),
+            supports_streaming=True, **_extra,
+        )
         log.info("WMARK: video muvaffaqiyatli yuborildi")
         await status.delete()
     except asyncio.TimeoutError:
@@ -2034,6 +2046,28 @@ def _probe_video_meta_sync(path: str):
         return w, h, (dur or None)
     except Exception:
         return None, None, None
+
+
+def _make_thumbnail_sync(path: str):
+    """Videodan muqova (JPEG, ~320px, <200 KB) yasaydi. Telegram'ga aniq
+    `thumbnail` berilmasa, ba'zi videolarda (ayniqsa yuklab olinmagan
+    holatda) muqova ko'rinmay, kulrang bo'sh kvadrat chiqadi."""
+    out = path.rsplit(".", 1)[0] + "_thumb.jpg"
+    try:
+        dur = _probe_duration_sync(path)
+        ss = "1" if dur and dur > 3 else "0"
+        for q in ("4", "8", "14"):
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-ss", ss, "-i", path, "-frames:v", "1",
+                 "-vf", "scale=320:320:force_original_aspect_ratio=decrease",
+                 "-q:v", q, out],
+                capture_output=True, timeout=30,
+            )
+            if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) < 190_000:
+                return out
+    except Exception as e:
+        log.warning(f"thumbnail yasab bo'lmadi: {e}")
+    return None
 
 
 def _faststart_remux_sync(path: str) -> str:
@@ -2347,6 +2381,10 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             extra.update(width=vw, height=vh)
         if vdur:
             extra["duration"] = vdur
+
+        thumb_path = await asyncio.to_thread(_make_thumbnail_sync, downloaded_path)
+        if thumb_path:
+            extra["thumbnail"] = FSInputFile(thumb_path)
 
         await safe_edit(status, t("uploading", lang))
         await bot.send_video(
