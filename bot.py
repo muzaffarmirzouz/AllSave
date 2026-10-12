@@ -1380,7 +1380,8 @@ LOGO_START_SECONDS = _env_float("LOGO_START_SECONDS", 5.0)
 LOGO_SHOW_SECONDS = _env_float("LOGO_SHOW_SECONDS", 9.0)
 
 
-def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
+def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str,
+                        youtube: bool = False) -> None:
     """FFmpeg orqali videoga berilgan logo faylni, berilgan pozitsiyada
     qo'yadi. GIF/WEBM butun video davomiyligiga yetguncha aylantiriladi
     (loop). Bloklaydigan (sinxron) funksiya — alohida threadda ishga
@@ -1408,29 +1409,35 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     else:
         overlay_graph = f"[video][logo2]overlay={xy}:shortest=1"
 
-    # Logo kengligi: kadrning kichik tomoniga (9:16 ga cheklangan) nisbatan.
-    _vw, _vh, _vd = _probe_video_meta_sync(input_path)
-    if _vw and _vh:
-        logo_w = int(min(_vw, _vh * 9 / 16) * 0.85)
+    # Logo o'lchami:
+    #  - Instagram va boshqa saytlar: AVVALGI usul (o'zgarmagan) —
+    #    scale2ref, logo o'z o'lchamining 85% i.
+    #  - YouTube: videoning (9:16 ga cheklangan) kenglikka nisbatan
+    #    YT_LOGO_WIDTH_RATIO (standart 0.5) qismi — YouTube videolari yuqori
+    #    sifatli (katta) bo'lgani uchun logo ulkan bo'lib ketmasligi uchun.
+    if youtube:
+        _vw, _vh, _vd = _probe_video_meta_sync(input_path)
+        try:
+            _ratio = float(os.environ.get("YT_LOGO_WIDTH_RATIO", "0.5"))
+        except ValueError:
+            _ratio = 0.5
+        base = min(_vw, _vh * 9 / 16) if (_vw and _vh) else 720
+        logo_w = max(int(base * _ratio) // 2 * 2, 16)
+        logo_scale_graph = f"[1:v]scale={logo_w}:-2[logo];[0:v]null[video];"
     else:
-        logo_w = 612  # o'lcham aniqlanmasa — 720 enli kadr uchun taxminiy
-    logo_w = max(logo_w - (logo_w % 2), 16)
+        logo_scale_graph = "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
 
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
         "-stream_loop", "-1", *logo_decoder, "-i", logo_file,
         "-filter_complex",
-        # Logo o'z nisbatini saqlagan holda, o'lchami Python'da HISOBLANADI
-        # (ffmpeg versiyasiga bog'liq scale2ref "main_w" farqlaridan qochish
-        # uchun): videoning 9:16 kadrdagi eniga nisbatan 85%.
-        f"[1:v]scale={logo_w}:-2[logo];"
-        "[0:v]null[video];"
+        logo_scale_graph
         # unpremultiply — rlottie ba'zan "premultiplied alpha" bilan chiqaradi
         # (rang qiymatlari shaffoflik bilan oldindan aralashtirilgan), bu esa
         # so'nish paytida QORA rangga "cho'kib" ketishga sabab bo'ladi; shu
         # filtr buni to'g'irlaydi (to'g'ri manbalarga zarar bermaydi).
-        "[logo]format=rgba,unpremultiply=inplace=1[logo2];"
+        + "[logo]format=rgba,unpremultiply=inplace=1[logo2];"
         + overlay_graph,
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
         # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
@@ -2285,7 +2292,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             try:
                 position = get_user_logo_position(message.from_user.id)
                 await asyncio.to_thread(
-                    _add_watermark_sync, downloaded_path, wm_output, user_logo, position
+                    _add_watermark_sync, downloaded_path, wm_output, user_logo, position,
+                    ("youtube.com" in url or "youtu.be" in url),
                 )
                 os.remove(downloaded_path)
                 downloaded_path = wm_output
