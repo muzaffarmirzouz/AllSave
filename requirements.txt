@@ -5,4 +5,5 @@ rlottie-python[full]
 gallery-dl
 transformers
 torch
+deno
 # force rebuild
