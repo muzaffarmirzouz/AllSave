@@ -1380,6 +1380,8 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
         # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+        # Eski telefonlar uchun maksimal mos profil (yuv420p, Main, L4.0)
+        "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
         "-c:a", "copy",
         "-movflags", "+faststart",
         output_path,
@@ -1460,7 +1462,9 @@ def _append_outro_sync(input_path: str, output_path: str, outro_file: str) -> No
         f"[main_a][outro_a]acrossfade=d={fade_dur:.2f}[outa]",
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
-        "-c:a", "aac",
+        "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
+        "-r", "30", "-fps_mode", "cfr",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
         "-movflags", "+faststart",
         output_path,
     ]
@@ -1977,7 +1981,8 @@ def _faststart_remux_sync(path: str) -> str:
     try:
         r = subprocess.run(
             ["ffmpeg", "-y", "-i", path, "-map", "0:v:0", "-map", "0:a?",
-             "-c", "copy", "-movflags", "+faststart", out],
+             "-c", "copy", "-avoid_negative_ts", "make_zero",
+             "-movflags", "+faststart", out],
             capture_output=True, timeout=300,
         )
         if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
@@ -2003,22 +2008,39 @@ def _ensure_telegram_compatible_sync(path: str) -> str:
     try:
         probe = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+             "-show_entries", "stream=codec_name,pix_fmt,level,profile",
+             "-of", "json", path],
             capture_output=True, text=True, timeout=15,
         )
-        vcodec = probe.stdout.strip().lower()
+        _st = (json.loads(probe.stdout or "{}").get("streams") or [{}])[0]
+        vcodec = (_st.get("codec_name") or "").lower()
+        pix_fmt = (_st.get("pix_fmt") or "").lower()
+        profile = (_st.get("profile") or "").lower()
+        try:
+            level = int(_st.get("level") or 0)
+        except Exception:
+            level = 0
     except Exception as e:
         log.warning(f"ffprobe xato (asl fayl qaytariladi): {e}")
         return path
 
-    if vcodec in ("h264",):
-        return path  # allaqachon mos — tezlik uchun qayta kodlash shart emas
+    # Eski telefonlar ham o'ynashi uchun: H.264, 8-bit yuv420p, Baseline/
+    # Main/High profil va level <= 4.2 bo'lsa — faylga tegilmaydi.
+    compatible = (
+        vcodec == "h264"
+        and pix_fmt in ("yuv420p", "yuvj420p")
+        and profile in ("baseline", "constrained baseline", "main", "high", "")
+        and (level == 0 or level <= 42)
+    )
+    if compatible:
+        return path
 
     fixed_path = path.rsplit(".", 1)[0] + "_fixed.mp4"
     try:
         result = subprocess.run(
             ["ffmpeg", "-y", "-i", path,
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+             "-pix_fmt", "yuv420p", "-profile:v", "main", "-level", "4.0",
              "-c:a", "aac", "-movflags", "+faststart", fixed_path],
             capture_output=True, text=True, timeout=180,
         )
@@ -2191,10 +2213,9 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             # noaniq/boshqa kodek bo'lgandagina ffprobe orqali tekshirib,
             # kerak bo'lsa tuzatamiz.
             vcodec = (result.get("vcodec") or "").lower()
-            if vcodec.startswith("avc1") or vcodec.startswith("h264"):
-                pass  # allaqachon mos — hech narsa qilinmaydi (tezroq)
-            else:
-                downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
+            # (profil/level/pix_fmt ham tekshiriladi — eski telefonlar uchun;
+            # ffprobe juda tez, faqat mos bo'lmasa qayta kodlanadi)
+            downloaded_path = await asyncio.to_thread(_ensure_telegram_compatible_sync, downloaded_path)
         else:
             # Logo yoki outro qo'llanganida ffmpeg allaqachon libx264'ga
             # qayta kodlagan — qo'shimcha moslik tekshiruvi shart emas.
