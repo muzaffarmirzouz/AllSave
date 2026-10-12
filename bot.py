@@ -1349,6 +1349,12 @@ def _build_image_caption(izoh: str = "") -> str:
     return (izoh + footer)[:1024]
 
 
+try:
+    LOGO_SHOW_SECONDS = float(os.environ.get("LOGO_SHOW_SECONDS", "10"))
+except ValueError:
+    LOGO_SHOW_SECONDS = 10.0
+
+
 def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, position: str) -> None:
     """FFmpeg orqali videoga berilgan logo faylni, berilgan pozitsiyada
     qo'yadi. GIF/WEBM butun video davomiyligiga yetguncha aylantiriladi
@@ -1364,6 +1370,22 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     # saqlash uchun .webm'ni "libvpx-vp9" dekoderi bilan o'qish shart.
     logo_decoder = ["-c:v", "libvpx-vp9"] if logo_file.lower().endswith(".webm") else []
 
+    # Logo faqat video BOSHIDA va OXIRIGA yaqin (har safar LOGO_SHOW_SECONDS
+    # soniya) ko'rinadi; oxiridagi nusxa animatsiyasi o'sha paytdan boshlab
+    # qaytadan o'ynaydi. Video juda qisqa bo'lsa — butun video davomida.
+    dur = _probe_duration_sync(input_path)
+    S = LOGO_SHOW_SECONDS
+    if S > 0 and dur > 2 * S + 1:
+        t2 = max(dur - S - 0.3, S)
+        overlay_graph = (
+            "[logo2]split=2[la][lb];"
+            f"[lb]setpts=PTS+{t2:.3f}/TB[lb2];"
+            f"[video][la]overlay={xy}:enable='between(t,0,{S})':shortest=1[v1];"
+            f"[v1][lb2]overlay={xy}:enable='between(t,{t2:.3f},{t2 + S:.3f})':shortest=1"
+        )
+    else:
+        overlay_graph = f"[video][logo2]overlay={xy}:shortest=1"
+
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
@@ -1376,7 +1398,7 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
         # so'nish paytida QORA rangga "cho'kib" ketishga sabab bo'ladi; shu
         # filtr buni to'g'irlaydi (to'g'ri manbalarga zarar bermaydi).
         "[logo]format=rgba,unpremultiply=inplace=1[logo2];"
-        f"[video][logo2]overlay={xy}:shortest=1",
+        + overlay_graph,
         # Logo qo'yish videoni QAYTA kodlashni talab qiladi (overlay tufayli),
         # shuning uchun hajm o'sib ketmasligi uchun aniq siqish beramiz.
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
