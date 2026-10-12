@@ -2171,6 +2171,19 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
     if PROXY_URL and not (is_yt and yt_mode == "direct"):
         ydl_opts["proxy"] = PROXY_URL
     if is_yt:
+        # YouTube uchun alohida sifat qoidasi: balandlik chegarasi
+        # YT_MAX_VIDEO_HEIGHT (standart 720) va Telegram 50 MB limitiga
+        # SIG'ADIGAN eng yaxshi sifat tanlanadi (hajmi noma'lum bo'lsa ham
+        # ruxsat — "?" belgisi). Instagram va boshqalarga ta'sir qilmaydi.
+        _yh = os.environ.get("YT_MAX_VIDEO_HEIGHT", "720").strip() or "720"
+        _vmb = max(MAX_TELEGRAM_MB - 6, 10)  # video qismi uchun joy (audio uchun ~6 MB)
+        ydl_opts["format"] = (
+            f"bestvideo[vcodec^=avc1][height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio/"
+            f"bestvideo[height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio/"
+            f"best[height<={_yh}][filesize_approx<?{MAX_TELEGRAM_MB}M]/"
+            f"bestvideo[vcodec^=avc1][height<=480]+bestaudio/best[height<=480]/best"
+        )
         # Yangi YouTube "n-challenge"ni yechish uchun JavaScript runtime
         # (Deno yoki Node.js) kerak — bo'lmasa "Requested format is not
         # available" xatosi chiqadi (faqat rasmlar ko'rinadi, video yo'q).
