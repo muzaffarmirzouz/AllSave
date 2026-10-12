@@ -1226,6 +1226,24 @@ def _download_media_gallery_dl_sync(url: str, output_dir: str) -> list:
     return files
 
 
+def _yt_cookie_summary(path) -> str:
+    """cookies.txt ichida YouTube kirish cookie'lari bormi (diagnostika)."""
+    if not path or not os.path.exists(path):
+        return "fayl yo'q"
+    try:
+        names = set()
+        with open(path, "r", errors="ignore") as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 7 and not line.startswith("#"):
+                    names.add(parts[5])
+        key = [n for n in ("SID", "__Secure-3PSID", "LOGIN_INFO", "SAPISID") if n in names]
+        joined = ",".join(key) or "YOQ (login qilinmagan!)"
+        return f"{len(names)} ta cookie, kirish cookielari: {joined}"
+    except Exception as e:
+        return f"o'qib bo'lmadi: {e}"
+
+
 def _download_video_sync(url: str, ydl_opts: dict) -> dict:
     """Bloklaydigan (sinxron) yuklab olish — alohida threadda ishga tushiriladi,
     shunda bot boshqa foydalanuvchilarga bir vaqtda javob bera oladi.
@@ -2144,8 +2162,36 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
     # so'rovlar shu proxy orqali o'tadi (masalan Instagram cookie sessiyasi
     # tezroq eskirib qolmasligi uchun statik rezidensial/ISP proxy).
     # Format: http://user:pass@host:port yoki socks5://user:pass@host:port
-    if PROXY_URL:
+    is_yt = "youtube.com" in url or "youtu.be" in url
+    # YouTube uchun proxy rejimi (Railway Variables: YT_PROXY_MODE):
+    #   "proxy"  (standart) — PROXY_URL orqali;
+    #   "direct" — proxysiz, Railway IP'dan to'g'ridan-to'g'ri.
+    # Cookie qaysi IP'dan olingan bo'lsa, shu IP'dan ishlatilgani ma'qul.
+    yt_mode = os.environ.get("YT_PROXY_MODE", "proxy").strip().lower()
+    if PROXY_URL and not (is_yt and yt_mode == "direct"):
         ydl_opts["proxy"] = PROXY_URL
+    if is_yt:
+        # Yangi YouTube "n-challenge"ni yechish uchun JavaScript runtime
+        # (Deno yoki Node.js) kerak — bo'lmasa "Requested format is not
+        # available" xatosi chiqadi (faqat rasmlar ko'rinadi, video yo'q).
+        _rt = None
+        for _name in ("deno", "node", "bun"):
+            _p = shutil.which(_name)
+            if _p:
+                _rt = (_name, _p)
+                break
+        if _rt:
+            ydl_opts["js_runtimes"] = {_rt[0]: {"path": _rt[1]}}
+            ydl_opts["remote_components"] = ["ejs:github"]
+        else:
+            log.warning("YT: JavaScript runtime (deno/node) topilmadi — YouTube formatlari chiqmasligi mumkin")
+        log.info(
+            "YT sozlamalari: cookies=" + ("bor" if ydl_opts.get("cookiefile") else "YOQ")
+            + " (" + _yt_cookie_summary(YT_COOKIES_FILE) + "), proxy="
+            + ("ha" if ydl_opts.get("proxy") else "yoq")
+            + ", pot=" + ("ha" if POT_PROVIDER_URL else "YOQ")
+            + ", js=" + (_rt[0] if _rt else "YOQ")
+        )
     if POT_PROVIDER_URL and ("youtube.com" in url or "youtu.be" in url):
         # yt-dlp'ning o'zi mos client'ni tanlashiga ruxsat beramiz — faqat
         # POT provider manzilini beramiz, majburlab client tanlamaymiz.
