@@ -1408,13 +1408,24 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     else:
         overlay_graph = f"[video][logo2]overlay={xy}:shortest=1"
 
+    # Logo kengligi: kadrning kichik tomoniga (9:16 ga cheklangan) nisbatan.
+    _vw, _vh, _vd = _probe_video_meta_sync(input_path)
+    if _vw and _vh:
+        logo_w = int(min(_vw, _vh * 9 / 16) * 0.85)
+    else:
+        logo_w = 612  # o'lcham aniqlanmasa — 720 enli kadr uchun taxminiy
+    logo_w = max(logo_w - (logo_w % 2), 16)
+
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
         "-stream_loop", "-1", *logo_decoder, "-i", logo_file,
         "-filter_complex",
-        # Logo videoning ENI'ga NISBATAN (85%) o'lchamlanadi.
-        "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
+        # Logo o'z nisbatini saqlagan holda, o'lchami Python'da HISOBLANADI
+        # (ffmpeg versiyasiga bog'liq scale2ref "main_w" farqlaridan qochish
+        # uchun): videoning 9:16 kadrdagi eniga nisbatan 85%.
+        f"[1:v]scale={logo_w}:-2[logo];"
+        "[0:v]null[video];"
         # unpremultiply — rlottie ba'zan "premultiplied alpha" bilan chiqaradi
         # (rang qiymatlari shaffoflik bilan oldindan aralashtirilgan), bu esa
         # so'nish paytida QORA rangga "cho'kib" ketishga sabab bo'ladi; shu
