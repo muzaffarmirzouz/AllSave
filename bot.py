@@ -2186,14 +2186,20 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         # YT_MAX_VIDEO_HEIGHT (standart 720) va Telegram 50 MB limitiga
         # SIG'ADIGAN eng yaxshi sifat tanlanadi (hajmi noma'lum bo'lsa ham
         # ruxsat — "?" belgisi). Instagram va boshqalarga ta'sir qilmaydi.
-        _yh = os.environ.get("YT_MAX_VIDEO_HEIGHT", "720").strip() or "720"
+        _yh = os.environ.get("YT_MAX_VIDEO_HEIGHT", "1080").strip() or "1080"
         _vmb = max(MAX_TELEGRAM_MB - 6, 10)  # video qismi uchun joy (audio uchun ~6 MB)
+        # MUHIM: YouTube Shorts vertikal (1080x1920) — yt-dlp'da "height" 1920
+        # bo'ladi, shuning uchun [height<=720] kabi filtr Shorts'ning FAQAT
+        # eng past (360p) variantlarini qoldirardi. Buning o'rniga "res"
+        # saralash maydoni ishlatiladi: u videoning KICHIK tomonini o'lchaydi
+        # (vertikal va gorizontal videolar uchun to'g'ri).
+        ydl_opts["format_sort"] = [f"res:{_yh}", "fps", "vcodec:h264"]
         ydl_opts["format"] = (
-            f"bestvideo[vcodec^=avc1][height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio[acodec^=mp4a]/"
-            f"bestvideo[vcodec^=avc1][height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio/"
-            f"bestvideo[height<={_yh}][filesize_approx<?{_vmb}M]+bestaudio/"
-            f"best[height<={_yh}][filesize_approx<?{MAX_TELEGRAM_MB}M]/"
-            f"bestvideo[vcodec^=avc1][height<=480]+bestaudio/best[height<=480]/best"
+            f"bestvideo[vcodec^=avc1][filesize_approx<?{_vmb}M]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][filesize_approx<?{_vmb}M]+bestaudio/"
+            f"bestvideo[filesize_approx<?{_vmb}M]+bestaudio/"
+            f"best[filesize_approx<?{MAX_TELEGRAM_MB}M]/"
+            "bestvideo[vcodec^=avc1]+bestaudio/best"
         )
         # Yangi YouTube "n-challenge"ni yechish uchun JavaScript runtime
         # (Deno yoki Node.js) kerak — bo'lmasa "Requested format is not
