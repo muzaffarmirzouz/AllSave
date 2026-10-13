@@ -75,7 +75,10 @@ DB_PATH = os.environ.get("DB_PATH", "users.db")
 # Video sifatini pasaytirib, fayl hajmini kichraytiradi — tezroq yuklanadi,
 # 50 MB chegarasiga kamroq tegadi. Railway'da MAX_VIDEO_HEIGHT o'zgaruvchisi
 # orqali sozlash mumkin (masalan 360, 480, 720). Standart: 480p.
-MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")
+MAX_VIDEO_HEIGHT = os.environ.get("MAX_VIDEO_HEIGHT", "480")  # eski nom (endi ishlatilmaydi)
+# Instagram, TikTok va boshqa saytlar uchun sifat chegarasi (videoning KICHIK
+# tomoni bo'yicha; 720 = 720p). Railway'da MAX_VIDEO_RES bilan o'zgartirish mumkin.
+MAX_VIDEO_RES = (os.environ.get("MAX_VIDEO_RES", "720").strip() or "720")
 
 # Bir vaqtning o'zida nechta video yuklab olish mumkinligini cheklaydi —
 # serverning protsessori/tarmog'i tiqilib qolmasligi uchun. Kerak bo'lsa
@@ -1409,23 +1412,21 @@ def _add_watermark_sync(input_path: str, output_path: str, logo_file: str, posit
     else:
         overlay_graph = f"[video][logo2]overlay={xy}:shortest=1"
 
-    # Logo o'lchami:
-    #  - Instagram va boshqa saytlar: AVVALGI usul (o'zgarmagan) —
-    #    scale2ref, logo o'z o'lchamining 85% i.
-    #  - YouTube: videoning (9:16 ga cheklangan) kenglikka nisbatan
-    #    YT_LOGO_WIDTH_RATIO (standart 0.5) qismi — YouTube videolari yuqori
-    #    sifatli (katta) bo'lgani uchun logo ulkan bo'lib ketmasligi uchun.
-    if youtube:
-        _vw, _vh, _vd = _probe_video_meta_sync(input_path)
-        try:
-            _ratio = float(os.environ.get("YT_LOGO_WIDTH_RATIO", "0.5"))
-        except ValueError:
-            _ratio = 0.5
-        base = min(_vw, _vh * 9 / 16) if (_vw and _vh) else 720
-        logo_w = max(int(base * _ratio) // 2 * 2, 16)
-        logo_scale_graph = f"[1:v]scale={logo_w}:-2[logo];[0:v]null[video];"
-    else:
-        logo_scale_graph = "[1:v][0:v]scale2ref=w=main_w*0.85:h=ow/mdar[logo][video];"
+    # Logo o'lchami HAMMA manbalar uchun bir xil NISBIY usulda: videoning
+    # (9:16 ga cheklangan) kengligidan LOGO_WIDTH_RATIO (standart 0.5) qismi.
+    # Shunda video qaysi o'lchamda (540/720/1080 px) bo'lishidan qat'i
+    # nazar logo ko'rinishi bir xil bo'ladi (avval piksel bo'yicha qat'iy
+    # bo'lgani uchun tor videolarda logo katta ko'rinardi).
+    # YouTube uchun alohida: YT_LOGO_WIDTH_RATIO (bo'lmasa — umumiysi).
+    _vw, _vh, _vd = _probe_video_meta_sync(input_path)
+    _default = os.environ.get("LOGO_WIDTH_RATIO", "0.5")
+    try:
+        _ratio = float(os.environ.get("YT_LOGO_WIDTH_RATIO", _default) if youtube else _default)
+    except ValueError:
+        _ratio = 0.5
+    base = min(_vw, _vh * 9 / 16) if (_vw and _vh) else 720
+    logo_w = max(int(base * _ratio) // 2 * 2, 16)
+    logo_scale_graph = f"[1:v]scale={logo_w}:-2[logo];[0:v]null[video];"
 
     cmd = [
         "ffmpeg", "-y",
@@ -2183,16 +2184,19 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         "format": (
             # Telegram VP9/AV1 kabi kodeklarni ba'zan to'g'ri ko'rsatmaydi —
             # shuning uchun avval aynan H.264 (avc1) + AAC (m4a) ni afzal
-            # ko'ramiz, faqat topilmasa umumiyroq variantlarga o'tamiz.
-            f"bestvideo[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]+bestaudio[acodec^=mp4a]/"
-            f"bestvideo[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]+bestaudio/"
-            f"best[vcodec^=avc1][height<={MAX_VIDEO_HEIGHT}]/"
-            f"bestvideo[height<={MAX_VIDEO_HEIGHT}]+bestaudio[ext=m4a]/"
-            f"bestvideo[height<={MAX_VIDEO_HEIGHT}]+bestaudio/"
-            f"best[height<={MAX_VIDEO_HEIGHT}][ext=mp4]/"
-            f"best[height<={MAX_VIDEO_HEIGHT}]/"
+            # ko'ramiz. Sifat chegarasi "format_sort" ("res:720", pastda) orqali
+            # beriladi: u videoning KICHIK tomonini o'lchaydi, shuning uchun
+            # vertikal videolarda ham to'g'ri ishlaydi (oddiy height filtri
+            # vertikal 720x1280 ni "1280" deb hisoblab tashlab yuborardi).
+            f"bestvideo[vcodec^=avc1][filesize_approx<?{MAX_TELEGRAM_MB - 6}M]+bestaudio[acodec^=mp4a]/"
+            f"bestvideo[vcodec^=avc1][filesize_approx<?{MAX_TELEGRAM_MB - 6}M]+bestaudio/"
+            f"best[vcodec^=avc1][filesize_approx<?{MAX_TELEGRAM_MB}M]/"
+            f"bestvideo[filesize_approx<?{MAX_TELEGRAM_MB - 6}M]+bestaudio[ext=m4a]/"
+            f"bestvideo[filesize_approx<?{MAX_TELEGRAM_MB - 6}M]+bestaudio/"
+            f"best[ext=mp4][filesize_approx<?{MAX_TELEGRAM_MB}M]/"
             "best[ext=mp4]/best"
         ),
+        "format_sort": [f"res:{MAX_VIDEO_RES}", "vcodec:h264"],
         "merge_output_format": "mp4",
         "postprocessor_args": {
             # "faststart" — MP4'ning meta-ma'lumotini (moov atom) fayl BOSHIGA
