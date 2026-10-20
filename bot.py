@@ -1573,6 +1573,11 @@ async def cmd_setcookies_yt(message: Message):
     )
 
 
+# Telegram oddiy Bot API botga 20 MB dan katta faylni yuklab bermaydi.
+TG_DOWNLOAD_LIMIT = 20 * 1024 * 1024
+TOO_BIG_TEXT = "\u274C Video juda katta. Iltimos, 20 MB dan kichik video yuboring."
+
+
 async def _handle_cookies_upload(message: Message, bot: Bot, kind: str):
     """/setcookies_ig yoki /setcookies_yt buyrug'idan keyin yuborilgan
     cookies.txt faylini doimiy joyga saqlaydi va darhol ishlatishni boshlaydi."""
@@ -1889,6 +1894,9 @@ async def handle_outro_upload(message: Message, bot: Bot, state: FSMContext):
     — shunda outro kutilayotgan foydalanuvchining videosi noto'g'ri
     ravishda "logo qo'yiladigan video" sifatida ishlov olmaydi."""
     lang = get_user_lang(message.from_user.id) or "uz"
+    if message.video.file_size and message.video.file_size > TG_DOWNLOAD_LIMIT:
+        await message.answer(TOO_BIG_TEXT)
+        return
     _awaiting_outro_from.discard(message.from_user.id)
     user_dir = os.path.join(USER_OUTROS_DIR, str(message.from_user.id))
     tmp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}_outro_up.mp4")
@@ -1954,6 +1962,11 @@ async def handle_owner_video(message: Message, bot: Bot):
     if not await is_subscribed(bot, message.from_user.id):
         log.info("WMARK: obuna emas, to'xtatildi")
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
+        return
+
+    if message.video.file_size and message.video.file_size > TG_DOWNLOAD_LIMIT:
+        log.info(f"WMARK: video katta, hajmi={message.video.file_size}")
+        await message.answer(TOO_BIG_TEXT)
         return
 
     status = await message.answer("\U0001F3A8 Ishlov berilmoqda...")
