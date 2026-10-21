@@ -2470,7 +2470,14 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         # orqali (rasm ham, video ham) qayta urinib ko'ramiz — u yt-dlp'dan
         # butunlay boshqacha ishlagani uchun ko'pincha muvaffaqiyatli bo'ladi.
         json_error_patterns = ("failed to parse json", "jsondecodeerror", "expecting value")
-        if "instagram.com" in url and any(p in err_text for p in json_error_patterns):
+        # Story'larda yt-dlp ko'pincha "You need to log in" deb to'xtaydi —
+        # bunda ham gallery-dl bilan qayta urinib ko'ramiz.
+        ig_story_login = (
+            "instagram.com" in url
+            and "/stories/" in url
+            and ("log in" in err_text or "login" in err_text)
+        )
+        if "instagram.com" in url and (ig_story_login or any(p in err_text for p in json_error_patterns)):
             try:
                 media_dir = tempfile.mkdtemp()
                 media_paths = await asyncio.to_thread(
