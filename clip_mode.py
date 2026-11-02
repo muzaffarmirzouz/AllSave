@@ -475,6 +475,26 @@ async def _notify_owner_diag(bot: Bot, text: str) -> None:
             logger.warning(f"/clip diagnostikani egaga yuborib bo'lmadi: {e}")
 
 
+_err_last_sent = 0.0
+ERR_COOLDOWN_SECONDS = 300
+
+
+async def _notify_owner_error(bot: Bot, where: str, err: Exception) -> None:
+    """Oxirgi (foydalanuvchi ko'rgan) xatoning HAQIQIY matnini bot egasiga
+    yuboradi — kamida ERR_COOLDOWN_SECONDS oralig'ida bir marta."""
+    global _err_last_sent
+    now = time.monotonic()
+    if _err_last_sent and now - _err_last_sent < ERR_COOLDOWN_SECONDS:
+        return
+    _err_last_sent = now
+    text = f"🛑 /clip XATO ({where}):\n\n{type(err).__name__}: {_scrub(str(err))[-1200:]}"
+    for owner_id in getattr(_bot_mod(), "OWNER_CHAT_IDS", []) or []:
+        try:
+            await bot.send_message(owner_id, text[:3500])
+        except Exception as e:
+            logger.warning(f"/clip xatoni egaga yuborib bo'lmadi: {e}")
+
+
 def _cut_local_sync(src: str, out: str, start: int, dur: int) -> None:
     """Lokal fayldan [start, start+dur] oralig'ini aniq qirqadi (qayta kodlab)."""
     cmd = [
@@ -704,6 +724,7 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
             await B.safe_edit(status, ct(ce.key, lang, **ce.fmt))
         except yt_dlp.utils.DownloadError as e:
             logger.warning(f"/clip download xato: {e}")
+            await _notify_owner_error(bot, "yuklash", e)
             err = str(e).lower()
             if any(p in err for p in ("sign in", "not a bot", "login", "cookies")):
                 await B.safe_edit(status, ct("youtube_blocked", lang))
@@ -713,6 +734,7 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
             import traceback
             logger.error(f"/clip kutilmagan xato: {type(e).__name__}: {e!r}")
             logger.error(traceback.format_exc())
+            await _notify_owner_error(bot, "kutilmagan", e)
             await B.safe_edit(status, ct("unexpected_error", lang))
 
 
