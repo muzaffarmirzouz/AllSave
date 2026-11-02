@@ -6,4 +6,6 @@ gallery-dl
 transformers
 torch
 deno
+numpy
+opencv-python-headless>=4.8,<5
 # force rebuild

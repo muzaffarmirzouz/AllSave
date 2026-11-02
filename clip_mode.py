@@ -62,6 +62,12 @@ CLIP_MAX_HEIGHT = (os.getenv("CLIP_MAX_HEIGHT", "720").strip() or "720")
 CLIP_MAX_CONCURRENT = int(os.getenv("CLIP_MAX_CONCURRENT", "2"))
 clip_semaphore = asyncio.Semaphore(CLIP_MAX_CONCURRENT)
 
+# Vertikal (9:16) rejim: odam yuzini kuzatib kesadi (vertical.py). 16:9 dan 9:16
+# kesilganda kadr kengligi uchdan biriga tushadi, shuning uchun manba sifati
+# yuqoriroq (standart 1080p) olinadi. Uzunlik chegarasi — CPU/hajm uchun.
+CLIP_VERTICAL_MAX_SECONDS = int(os.getenv("CLIP_VERTICAL_MAX_SECONDS", "120"))
+CLIP_VERTICAL_SOURCE_HEIGHT = int(os.getenv("CLIP_VERTICAL_SOURCE_HEIGHT", "1080"))
+
 TELEGRAM_LIMIT_MB = 50
 # Telegram chegarasidan biroz pastroq — konteyner qo'shimcha hajmi uchun zaxira.
 SAFE_LIMIT_MB = 48
@@ -118,7 +124,9 @@ CLIP_TEXTS = {
         "ask_range": (
             "⏱ Endi kerakli qismning boshlanish va tugash vaqtini yozing, masalan:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
-            "Bitta qism eng ko'pi bilan {max} bo'lishi mumkin.\n(Bekor qilish: /cancel)"
+            "Bitta qism eng ko'pi bilan {max} bo'lishi mumkin.\n\n"
+            "📱 Vertikal (9:16) kerak bo'lsa, oxiriga 9:16 deb yozing, masalan: 34:15-35:15 9:16 "
+            "(odam yuzini kuzatib kesadi, 2 daqiqagacha).\n(Bekor qilish: /cancel)"
         ),
         "bad_range": "❌ Vaqtni tushunmadim. Shunday yozing: 34:15-35:15 (tugash vaqti boshlanishidan keyin bo'lsin).",
         "range_too_long": "❌ Qism juda uzun. Eng ko'pi bilan {max} bo'lishi mumkin — qisqaroq oraliq yozing.",
@@ -134,6 +142,10 @@ CLIP_TEXTS = {
         "unexpected_error": "❌ Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
         "fallback_notice": "⏳ Tezkor usul ishlamadi, boshqa usulda yuklanmoqda — bu bir necha daqiqa olishi mumkin, iltimos kuting...",
         "fallback_too_long": "❌ Bu video juda uzun, shuning uchun qirqib bo'lmadi (zaxira usul {max} gacha bo'lgan videolar uchun ishlaydi).",
+        "reframing": "📱 9:16 formatga o'tkazilmoqda (odam yuzi kuzatiladi), biroz kuting...",
+        "vertical_too_long": "❌ Vertikal (9:16) rejimda qism eng ko'pi bilan {max} bo'lishi mumkin. Qisqaroq oraliq yozing.",
+        "vertical_failed": "⚠️ 9:16 qilib bo'lmadi, oddiy (gorizontal) shaklda yuboriladi...",
+        "no_face_note": "ℹ️ Odam yuzi topilmadi — kadr markazdan kesildi.",
     },
     "ru": {
         "ask_link": (
@@ -143,7 +155,9 @@ CLIP_TEXTS = {
         "ask_range": (
             "⏱ Теперь напишите время начала и конца нужного фрагмента, например:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
-            "Один фрагмент — не длиннее {max}.\n(Отмена: /cancel)"
+            "Один фрагмент — не длиннее {max}.\n\n"
+            "📱 Для вертикального (9:16) формата допишите в конце 9:16, например: 34:15-35:15 9:16 "
+            "(следит за лицом, до 2 минут).\n(Отмена: /cancel)"
         ),
         "bad_range": "❌ Не понял время. Напишите так: 34:15-35:15 (конец должен быть позже начала).",
         "range_too_long": "❌ Фрагмент слишком длинный. Максимум — {max}, напишите промежуток короче.",
@@ -159,6 +173,10 @@ CLIP_TEXTS = {
         "unexpected_error": "❌ Произошла ошибка, попробуйте ещё раз чуть позже.",
         "fallback_notice": "⏳ Быстрый способ не сработал, скачиваю другим способом — это может занять несколько минут, подождите...",
         "fallback_too_long": "❌ Видео слишком длинное, вырезать не удалось (запасной способ работает для видео до {max}).",
+        "reframing": "📱 Перевожу в формат 9:16 (слежу за лицом), подождите немного...",
+        "vertical_too_long": "❌ В вертикальном режиме (9:16) фрагмент — не длиннее {max}. Напишите промежуток короче.",
+        "vertical_failed": "⚠️ Не удалось сделать 9:16, отправлю обычное (горизонтальное) видео...",
+        "no_face_note": "ℹ️ Лицо не найдено — кадр обрезан по центру.",
     },
     "en": {
         "ask_link": (
@@ -168,7 +186,9 @@ CLIP_TEXTS = {
         "ask_range": (
             "⏱ Now write the start and end time of the part you want, e.g.:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
-            "A single clip can be at most {max} long.\n(Cancel: /cancel)"
+            "A single clip can be at most {max} long.\n\n"
+            "📱 For vertical (9:16), add 9:16 at the end, e.g.: 34:15-35:15 9:16 "
+            "(follows the face, up to 2 minutes).\n(Cancel: /cancel)"
         ),
         "bad_range": "❌ I couldn't understand the time. Write it like: 34:15-35:15 (the end must be after the start).",
         "range_too_long": "❌ That clip is too long. The maximum is {max} — please write a shorter range.",
@@ -184,6 +204,10 @@ CLIP_TEXTS = {
         "unexpected_error": "❌ Something went wrong, please try again in a moment.",
         "fallback_notice": "⏳ The fast method didn't work, trying another way — this may take a few minutes, please wait...",
         "fallback_too_long": "❌ This video is too long to cut (the backup method works for videos up to {max}).",
+        "reframing": "📱 Converting to 9:16 (following the face), please wait...",
+        "vertical_too_long": "❌ In vertical (9:16) mode a clip can be at most {max}. Please write a shorter range.",
+        "vertical_failed": "⚠️ Couldn't make it 9:16, sending the regular (horizontal) clip...",
+        "no_face_note": "ℹ️ No face found — cropped from the center.",
     },
 }
 
@@ -258,7 +282,7 @@ def fmt_time(sec: int) -> str:
 
 # ------------------------------------------------------ yuklab olish va qirqish
 
-def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False) -> dict:
+def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False, source_height: Optional[int] = None) -> dict:
     """bot.py'dagi YouTube sozlamalari (cookies, proxy, JS runtime, PO token)
     bilan BIR XIL, faqat butun video o'rniga `download_ranges` bilan."""
     B = _bot_mod()
@@ -272,7 +296,7 @@ def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False) -> dic
             "bestvideo[vcodec^=avc1]+bestaudio/"
             "bestvideo+bestaudio/best"
         ),
-        "format_sort": [f"res:{CLIP_MAX_HEIGHT}", "fps", "vcodec:h264"],
+        "format_sort": [f"res:{source_height or CLIP_MAX_HEIGHT}", "fps", "vcodec:h264"],
         "merge_output_format": "mp4",
         "download_ranges": ranges_fn,
         # Aniq qirqish (keyframe chegarasiga yopishib qolmasin) — qayta kodlaydi,
@@ -302,12 +326,14 @@ def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False) -> dic
         opts.pop("download_ranges", None)
         opts.pop("force_keyframes_at_cuts", None)
         opts["outtmpl"] = os.path.join(tmp_dir, "full.%(ext)s")
-        opts["format_sort"] = [f"res:{CLIP_FALLBACK_HEIGHT}", "fps", "vcodec:h264"]
+        fb_h = min(source_height, 720) if source_height else CLIP_FALLBACK_HEIGHT
+        opts["format_sort"] = [f"res:{fb_h}", "fps", "vcodec:h264"]
         opts["max_filesize"] = CLIP_FALLBACK_MAX_MB * 1024 * 1024
     return opts
 
 
-def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: bool = False) -> dict:
+def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: bool = False,
+                        source_height: Optional[int] = None) -> dict:
     """Bloklaydigan: avval video ma'lumotini oladi (uzunlik, live emasligini
     tekshiradi), keyin FAQAT [start, end] oralig'ini yuklab oladi."""
     holder = {"start": start, "end": end}
@@ -315,7 +341,7 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: 
     def ranges_fn(info_dict, ydl):
         return [{"start_time": holder["start"], "end_time": holder["end"]}]
 
-    with yt_dlp.YoutubeDL(_build_ydl_opts(tmp_dir, None if fallback else ranges_fn, fallback)) as ydl:
+    with yt_dlp.YoutubeDL(_build_ydl_opts(tmp_dir, None if fallback else ranges_fn, fallback, source_height)) as ydl:
         info = ydl.extract_info(url, download=False)
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise ClipError("live")
@@ -539,7 +565,8 @@ def _clean_dir(tmp_dir: str) -> None:
             pass
 
 
-async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_fallback=None, on_diag=None) -> dict:
+async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_fallback=None, on_diag=None,
+                                 source_height: Optional[int] = None) -> dict:
     """1) Tezkor usul: ffmpeg faqat kerakli bo'lakni yuklaydi.
     2) U ffmpeg/HTTP xatosi bilan yiqilsa — zaxira usul (past sifatli to'liq
        yuklash + lokal qirqish). Tezkor usul yiqilganini bir muddat eslab
@@ -549,7 +576,7 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
 
     if not CLIP_FALLBACK or time.monotonic() >= _section_skip_until:
         try:
-            return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, False)
+            return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, False, source_height)
         except ClipError:
             raise
         except yt_dlp.utils.DownloadError as e:
@@ -569,7 +596,7 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
         await on_fallback()
     await asyncio.to_thread(_clean_dir, tmp_dir)
     try:
-        return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, True)
+        return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, True, source_height)
     except yt_dlp.utils.DownloadError as e:
         logger.warning(f"/clip zaxira usul ham xato berdi: {e}")
         raise
@@ -587,7 +614,8 @@ def _shrink_to_fit_sync(path: str, duration_s: float, limit_mb: int) -> str:
         return path
     cmd = ["ffmpeg", "-y", "-i", path]
     if video_kbps < 700:
-        cmd += ["-vf", "scale=-2:'min(480,ih)'"]
+        # Kichik tomonni 480 gacha cheklaydi (gorizontal ham, vertikal ham to'g'ri).
+        cmd += ["-vf", "scale='if(gt(iw,ih),-2,min(480,iw))':'if(gt(iw,ih),min(480,ih),-2)'"]
     cmd += [
         "-c:v", "libx264", "-preset", "veryfast",
         "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.3)}k",
@@ -611,10 +639,54 @@ def _shrink_to_fit_sync(path: str, duration_s: float, limit_mb: int) -> str:
     return path
 
 
-def _build_clip_caption(title: str, start: int, end: int) -> str:
+_VERT_WORD_RE = re.compile(r"(?<!\S)(?:vertikal|vertical|reels|9x16|9х16)(?!\S)", re.IGNORECASE)
+_VERT_RATIO_RE = re.compile(r"(?<!\S)9\s?:\s?16(?!\S)")
+
+
+def split_vertical_flag(text: str) -> Tuple[bool, str]:
+    """Matndan "vertikal (9:16)" belgisini ajratadi. -> (vertikal_mi, tozalangan_matn).
+    So'zlar: vertikal / vertical / reels / 9x16. "9:16" faqat alohida so'z bo'lib
+    kelsa VA qolgan matnda kamida ikkita vaqt bo'lsa belgi hisoblanadi (aks holda
+    "9:16-10:00" kabi haqiqiy vaqt bilan adashib ketmasligi uchun). URL'lar tegilmaydi."""
+    text = text or ""
+    urls = _ANY_URL_RE.findall(text)
+    masked = _ANY_URL_RE.sub("\x00", text)
+    vertical = False
+    if _VERT_WORD_RE.search(masked):
+        vertical = True
+        masked = _VERT_WORD_RE.sub(" ", masked)
+    m = _VERT_RATIO_RE.search(masked)
+    if m:
+        without = masked[:m.start()] + " " + masked[m.end():]
+        if len(_TIME_RE.findall(without)) >= 2:
+            vertical = True
+            masked = without
+    it = iter(urls)
+    return vertical, re.sub("\x00", lambda _m: next(it), masked)
+
+
+def _reframe_sync(path: str, src_w: int, src_h: int, duration: float) -> dict:
+    """16:9 -> 9:16 (yuzni kuzatib). Muvaffaqiyatda eski faylni o'chiradi."""
+    import vertical  # sekin import: cv2/numpy faqat vertikal rejimda yuklanadi
+
+    out = path.rsplit(".", 1)[0] + "_9x16.mp4"
+    # Chiqish hajmi ~46 MB dan oshmasligi uchun bitrate chegarasi (audio 128k).
+    kbps = int(46 * 1024 * 8 * 0.92 / max(duration, 1.0) - 128)
+    res = vertical.reframe_to_vertical(path, out, src_w, src_h, duration=duration, max_kbps=max(kbps, 400))
+    if res.get("path"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return res
+
+
+def _build_clip_caption(title: str, start: int, end: int, note: str = "") -> str:
     B = _bot_mod()
     footer = f"\n\n✂️ {B.BOT_USERNAME_TAG} orqali qirqib olindi"
     head = f"⏱ {fmt_time(start)} – {fmt_time(end)}"
+    if note:
+        head += f"\n{note}"
     title = (title or "").strip()
     room = 1024 - len(footer) - len(head) - 6
     if title and room > 10:
@@ -626,7 +698,8 @@ def _build_clip_caption(title: str, start: int, end: int) -> str:
 
 # ------------------------------------------------------------- asosiy jarayon
 
-async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: int, end: int):
+async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: int, end: int,
+                    vertical: bool = False):
     B = _bot_mod()
     lang = _lang(user_id)
     status = await message.answer(ct("downloading", lang))
@@ -634,6 +707,9 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
 
     if end - start > CLIP_MAX_SECONDS:
         await B.safe_edit(status, ct("range_too_long", lang, max=max_len))
+        return
+    if vertical and end - start > CLIP_VERTICAL_MAX_SECONDS:
+        await B.safe_edit(status, ct("vertical_too_long", lang, max=fmt_time(CLIP_VERTICAL_MAX_SECONDS)))
         return
 
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -650,13 +726,36 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
                 async def _diag(text):
                     await _notify_owner_diag(bot, text)
 
-                info = await _download_with_retry(url, start, end, tmp_dir, on_fallback=_notice, on_diag=_diag)
+                info = await _download_with_retry(
+                    url, start, end, tmp_dir, on_fallback=_notice, on_diag=_diag,
+                    source_height=CLIP_VERTICAL_SOURCE_HEIGHT if vertical else None,
+                )
 
             path = info["path"]
             start, end = info["start"], info["end"]
 
-            # --- Logo / Outro: bot.py'dagi doimiy sozlamalar bilan bir xil ---
             applied = False
+            face_note = ""
+
+            # --- Vertikal (9:16): yuzni kuzatib kesish (logo/outro'dan OLDIN) ---
+            if vertical:
+                await B.safe_edit(status, ct("reframing", lang))
+                try:
+                    vw0, vh0, _vd0 = await asyncio.to_thread(B._probe_video_meta_sync, path)
+                    if not (vw0 and vh0):
+                        raise RuntimeError("video o'lchamini aniqlab bo'lmadi")
+                    rf = await asyncio.to_thread(_reframe_sync, path, vw0, vh0, float(end - start))
+                    if rf.get("path"):
+                        path = rf["path"]
+                        applied = True  # allaqachon H.264 + faststart — qayta tekshirish shart emas
+                        if rf.get("face_ratio", 1.0) < 0.2:
+                            face_note = ct("no_face_note", lang)
+                except Exception as e:
+                    logger.error(f"/clip 9:16 kesishda xato (gorizontal yuboriladi): {e}")
+                    await _notify_owner_error(bot, "9:16", e)
+                    await B.safe_edit(status, ct("vertical_failed", lang))
+
+            # --- Logo / Outro: bot.py'dagi doimiy sozlamalar bilan bir xil ---
             user_logo = B._find_user_logo(user_id) if B.get_user_logo_enabled(user_id) else None
             user_outro = B._find_user_outro(user_id) if B.get_user_outro_enabled(user_id) else None
             if user_logo:
@@ -714,7 +813,7 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
             await bot.send_video(
                 chat_id=message.chat.id,
                 video=FSInputFile(path),
-                caption=_build_clip_caption(info.get("title", ""), start, end),
+                caption=_build_clip_caption(info.get("title", ""), start, end, face_note),
                 supports_streaming=True,
                 **extra,
             )
@@ -760,6 +859,7 @@ async def cmd_clip(message: Message, command: CommandObject, state: FSMContext, 
         return
     lang = _lang(uid)
     args = command.args or ""
+    vertical, args = split_vertical_flag(args)
     m = _YT_URL_RE.search(args)
     if m:
         url = m.group(0)
@@ -768,9 +868,9 @@ async def cmd_clip(message: Message, command: CommandObject, state: FSMContext, 
             if rng is None:
                 await message.answer(ct("bad_range", lang))
                 return
-            await _run_clip(message, bot, uid, url, *rng)
+            await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
             return
-        await state.update_data(url=url)
+        await state.update_data(url=url, vertical=vertical)
         await state.set_state(ClipStates.waiting_range)
         await message.answer(ct("ask_range", lang, max=fmt_time(CLIP_MAX_SECONDS)))
         return
@@ -802,12 +902,13 @@ async def handle_link_with_range(message: Message, state: FSMContext, bot: Bot):
     if not await _ensure_subscribed(bot, message, uid):
         return
     lang = _lang(uid)
-    rng = parse_time_range(message.text)
+    vertical, cleaned = split_vertical_flag(message.text)
+    rng = parse_time_range(cleaned)
     if rng is None:
         await message.answer(ct("bad_range", lang))
         return
     url = _YT_URL_RE.search(message.text).group(0)
-    await _run_clip(message, bot, uid, url, *rng)
+    await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
 
 
 @clip_router.message(ClipStates.waiting_link, F.text, ~F.text.startswith("/"))
@@ -834,12 +935,17 @@ async def got_range(message: Message, state: FSMContext, bot: Bot):
         await message.answer(ct("ask_link", lang))
         await state.set_state(ClipStates.waiting_link)
         return
-    rng = parse_time_range(message.text)
+    flag, cleaned = split_vertical_flag(message.text)
+    vertical = flag or bool(data.get("vertical"))
+    rng = parse_time_range(cleaned)
     if rng is None:
         await message.answer(ct("bad_range", lang))
         return
     if rng[1] - rng[0] > CLIP_MAX_SECONDS:
         await message.answer(ct("range_too_long", lang, max=fmt_time(CLIP_MAX_SECONDS)))
         return
+    if vertical and rng[1] - rng[0] > CLIP_VERTICAL_MAX_SECONDS:
+        await message.answer(ct("vertical_too_long", lang, max=fmt_time(CLIP_VERTICAL_MAX_SECONDS)))
+        return
     await state.clear()
-    await _run_clip(message, bot, uid, url, *rng)
+    await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
