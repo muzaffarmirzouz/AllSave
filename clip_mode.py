@@ -42,6 +42,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from typing import Optional, Tuple
 
 import yt_dlp
@@ -49,7 +50,7 @@ from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +126,7 @@ CLIP_TEXTS = {
             "⏱ Endi kerakli qismning boshlanish va tugash vaqtini yozing, masalan:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
             "Bitta qism eng ko'pi bilan {max} bo'lishi mumkin.\n\n"
-            "📱 Vertikal (9:16) kerak bo'lsa, oxiriga 9:16 deb yozing, masalan: 34:15-35:15 9:16 "
-            "(odam yuzini kuzatib kesadi, 2 daqiqagacha).\n(Bekor qilish: /cancel)"
+            "Formatni (16:9 yoki 9:16) keyin tugma bilan so'rayman.\n(Bekor qilish: /cancel)"
         ),
         "bad_range": "❌ Vaqtni tushunmadim. Shunday yozing: 34:15-35:15 (tugash vaqti boshlanishidan keyin bo'lsin).",
         "range_too_long": "❌ Qism juda uzun. Eng ko'pi bilan {max} bo'lishi mumkin — qisqaroq oraliq yozing.",
@@ -146,6 +146,13 @@ CLIP_TEXTS = {
         "vertical_too_long": "❌ Vertikal (9:16) rejimda qism eng ko'pi bilan {max} bo'lishi mumkin. Qisqaroq oraliq yozing.",
         "vertical_failed": "⚠️ 9:16 qilib bo'lmadi, oddiy (gorizontal) shaklda yuboriladi...",
         "no_face_note": "ℹ️ Odam yuzi topilmadi — kadr markazdan kesildi.",
+        "ask_format": "🎬 Qaysi formatda kerak?\n⏱ {a} – {b}",
+        "btn_h": "🖥 16:9 (YouTube)",
+        "btn_v": "📱 9:16 (Reels)",
+        "chosen_h": "✅ Format: 16:9 (YouTube)\n⏱ {a} – {b}",
+        "chosen_v": "✅ Format: 9:16 (Reels)\n⏱ {a} – {b}",
+        "format_expired": "Bu so'rov eskirgan. Havola va vaqtni qayta yuboring.",
+        "vertical_btn_too_long": "9:16 uchun qism {max} dan oshmasligi kerak. 16:9 ni tanlang yoki qisqaroq oraliq yuboring.",
     },
     "ru": {
         "ask_link": (
@@ -156,8 +163,7 @@ CLIP_TEXTS = {
             "⏱ Теперь напишите время начала и конца нужного фрагмента, например:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
             "Один фрагмент — не длиннее {max}.\n\n"
-            "📱 Для вертикального (9:16) формата допишите в конце 9:16, например: 34:15-35:15 9:16 "
-            "(следит за лицом, до 2 минут).\n(Отмена: /cancel)"
+            "Формат (16:9 или 9:16) спрошу потом кнопками.\n(Отмена: /cancel)"
         ),
         "bad_range": "❌ Не понял время. Напишите так: 34:15-35:15 (конец должен быть позже начала).",
         "range_too_long": "❌ Фрагмент слишком длинный. Максимум — {max}, напишите промежуток короче.",
@@ -177,6 +183,13 @@ CLIP_TEXTS = {
         "vertical_too_long": "❌ В вертикальном режиме (9:16) фрагмент — не длиннее {max}. Напишите промежуток короче.",
         "vertical_failed": "⚠️ Не удалось сделать 9:16, отправлю обычное (горизонтальное) видео...",
         "no_face_note": "ℹ️ Лицо не найдено — кадр обрезан по центру.",
+        "ask_format": "🎬 В каком формате нужно?\n⏱ {a} – {b}",
+        "btn_h": "🖥 16:9 (YouTube)",
+        "btn_v": "📱 9:16 (Reels)",
+        "chosen_h": "✅ Формат: 16:9 (YouTube)\n⏱ {a} – {b}",
+        "chosen_v": "✅ Формат: 9:16 (Reels)\n⏱ {a} – {b}",
+        "format_expired": "Этот запрос устарел. Отправьте ссылку и время ещё раз.",
+        "vertical_btn_too_long": "Для 9:16 фрагмент не должен быть длиннее {max}. Выберите 16:9 или отправьте промежуток короче.",
     },
     "en": {
         "ask_link": (
@@ -187,8 +200,7 @@ CLIP_TEXTS = {
             "⏱ Now write the start and end time of the part you want, e.g.:\n\n"
             "34:15-35:15\n1:02:30-1:04:00\n\n"
             "A single clip can be at most {max} long.\n\n"
-            "📱 For vertical (9:16), add 9:16 at the end, e.g.: 34:15-35:15 9:16 "
-            "(follows the face, up to 2 minutes).\n(Cancel: /cancel)"
+            "I'll ask for the format (16:9 or 9:16) with buttons next.\n(Cancel: /cancel)"
         ),
         "bad_range": "❌ I couldn't understand the time. Write it like: 34:15-35:15 (the end must be after the start).",
         "range_too_long": "❌ That clip is too long. The maximum is {max} — please write a shorter range.",
@@ -208,6 +220,13 @@ CLIP_TEXTS = {
         "vertical_too_long": "❌ In vertical (9:16) mode a clip can be at most {max}. Please write a shorter range.",
         "vertical_failed": "⚠️ Couldn't make it 9:16, sending the regular (horizontal) clip...",
         "no_face_note": "ℹ️ No face found — cropped from the center.",
+        "ask_format": "🎬 Which format do you need?\n⏱ {a} – {b}",
+        "btn_h": "🖥 16:9 (YouTube)",
+        "btn_v": "📱 9:16 (Reels)",
+        "chosen_h": "✅ Format: 16:9 (YouTube)\n⏱ {a} – {b}",
+        "chosen_v": "✅ Format: 9:16 (Reels)\n⏱ {a} – {b}",
+        "format_expired": "This request has expired. Please send the link and time again.",
+        "vertical_btn_too_long": "For 9:16 the clip must be at most {max}. Choose 16:9 or send a shorter range.",
     },
 }
 
@@ -665,6 +684,67 @@ def split_vertical_flag(text: str) -> Tuple[bool, str]:
     return vertical, re.sub("\x00", lambda _m: next(it), masked)
 
 
+_HORIZ_WORD_RE = re.compile(r"(?<!\S)(?:gorizontal|horizontal|16x9|16х9)(?!\S)", re.IGNORECASE)
+
+
+def split_format_flag(text: str) -> Tuple[Optional[str], str]:
+    """Matndan aniq format belgisini ajratadi. -> ("v" | "h" | None, tozalangan_matn).
+    "v": vertikal (9:16 / vertikal / vertical / reels / 9x16),
+    "h": gorizontal (gorizontal / horizontal / 16x9).
+    None — format aytilmagan, bot tugma bilan so'raydi."""
+    vertical, cleaned = split_vertical_flag(text)
+    if vertical:
+        return "v", cleaned
+    urls = _ANY_URL_RE.findall(cleaned)
+    masked = _ANY_URL_RE.sub("\x00", cleaned)
+    if _HORIZ_WORD_RE.search(masked):
+        masked = _HORIZ_WORD_RE.sub(" ", masked)
+        it = iter(urls)
+        return "h", re.sub("\x00", lambda _m: next(it), masked)
+    return None, cleaned
+
+
+# --- Format so'rash (tugmalar) ---------------------------------------------
+# Havola + vaqt oralig'i aniq bo'lgach, bot "16:9 yoki 9:16?" deb so'raydi. Telegram
+# callback_data 64 baytdan oshmasligi kerak, shuning uchun havola/vaqt xotirada
+# (qisqa token bilan) saqlanadi. Bot qayta ishga tushsa, eski tugmalar "eskirgan" deydi.
+_pending: dict = {}
+PENDING_TTL_SECONDS = 1800
+PENDING_MAX = 500
+
+
+def _pending_put(uid: int, url: str, start: int, end: int) -> str:
+    now = time.monotonic()
+    for k in [k for k, v in _pending.items() if now - v[4] > PENDING_TTL_SECONDS]:
+        _pending.pop(k, None)
+    while len(_pending) >= PENDING_MAX:
+        _pending.pop(min(_pending, key=lambda k: _pending[k][4]), None)
+    token = uuid.uuid4().hex[:10]
+    _pending[token] = (uid, url, start, end, now)
+    return token
+
+
+async def _ask_format(message: Message, uid: int, url: str, start: int, end: int) -> None:
+    lang = _lang(uid)
+    if end - start > CLIP_MAX_SECONDS:
+        await message.answer(ct("range_too_long", lang, max=fmt_time(CLIP_MAX_SECONDS)))
+        return
+    token = _pending_put(uid, url, start, end)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=ct("btn_h", lang), callback_data=f"clipfmt:{token}:h"),
+        InlineKeyboardButton(text=ct("btn_v", lang), callback_data=f"clipfmt:{token}:v"),
+    ]])
+    await message.answer(ct("ask_format", lang, a=fmt_time(start), b=fmt_time(end)), reply_markup=kb)
+
+
+async def _dispatch(message: Message, bot: Bot, uid: int, url: str, rng: Tuple[int, int], fmt: Optional[str]) -> None:
+    """Format aniq aytilgan bo'lsa (v/h) — darhol qirqadi, aks holda tugma bilan so'raydi."""
+    if fmt is None:
+        await _ask_format(message, uid, url, rng[0], rng[1])
+    else:
+        await _run_clip(message, bot, uid, url, *rng, vertical=(fmt == "v"))
+
+
 def _reframe_sync(path: str, src_w: int, src_h: int, duration: float) -> dict:
     """16:9 -> 9:16 (yuzni kuzatib). Muvaffaqiyatda eski faylni o'chiradi."""
     import vertical  # sekin import: cv2/numpy faqat vertikal rejimda yuklanadi
@@ -859,7 +939,7 @@ async def cmd_clip(message: Message, command: CommandObject, state: FSMContext, 
         return
     lang = _lang(uid)
     args = command.args or ""
-    vertical, args = split_vertical_flag(args)
+    fmt, args = split_format_flag(args)
     m = _YT_URL_RE.search(args)
     if m:
         url = m.group(0)
@@ -868,9 +948,9 @@ async def cmd_clip(message: Message, command: CommandObject, state: FSMContext, 
             if rng is None:
                 await message.answer(ct("bad_range", lang))
                 return
-            await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
+            await _dispatch(message, bot, uid, url, rng, fmt)
             return
-        await state.update_data(url=url, vertical=vertical)
+        await state.update_data(url=url, fmt=fmt)
         await state.set_state(ClipStates.waiting_range)
         await message.answer(ct("ask_range", lang, max=fmt_time(CLIP_MAX_SECONDS)))
         return
@@ -902,13 +982,13 @@ async def handle_link_with_range(message: Message, state: FSMContext, bot: Bot):
     if not await _ensure_subscribed(bot, message, uid):
         return
     lang = _lang(uid)
-    vertical, cleaned = split_vertical_flag(message.text)
+    fmt, cleaned = split_format_flag(message.text)
     rng = parse_time_range(cleaned)
     if rng is None:
         await message.answer(ct("bad_range", lang))
         return
     url = _YT_URL_RE.search(message.text).group(0)
-    await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
+    await _dispatch(message, bot, uid, url, rng, fmt)
 
 
 @clip_router.message(ClipStates.waiting_link, F.text, ~F.text.startswith("/"))
@@ -935,8 +1015,8 @@ async def got_range(message: Message, state: FSMContext, bot: Bot):
         await message.answer(ct("ask_link", lang))
         await state.set_state(ClipStates.waiting_link)
         return
-    flag, cleaned = split_vertical_flag(message.text)
-    vertical = flag or bool(data.get("vertical"))
+    flag, cleaned = split_format_flag(message.text)
+    fmt = flag or data.get("fmt")
     rng = parse_time_range(cleaned)
     if rng is None:
         await message.answer(ct("bad_range", lang))
@@ -944,8 +1024,40 @@ async def got_range(message: Message, state: FSMContext, bot: Bot):
     if rng[1] - rng[0] > CLIP_MAX_SECONDS:
         await message.answer(ct("range_too_long", lang, max=fmt_time(CLIP_MAX_SECONDS)))
         return
-    if vertical and rng[1] - rng[0] > CLIP_VERTICAL_MAX_SECONDS:
+    if fmt == "v" and rng[1] - rng[0] > CLIP_VERTICAL_MAX_SECONDS:
         await message.answer(ct("vertical_too_long", lang, max=fmt_time(CLIP_VERTICAL_MAX_SECONDS)))
         return
     await state.clear()
-    await _run_clip(message, bot, uid, url, *rng, vertical=vertical)
+    await _dispatch(message, bot, uid, url, rng, fmt)
+
+
+@clip_router.callback_query(F.data.startswith("clipfmt:"))
+async def cb_clip_format(callback: CallbackQuery, bot: Bot):
+    """«16:9» / «9:16» tugmasi bosilganda qirqishni boshlaydi."""
+    uid = callback.from_user.id  # MUHIM: bosgan odam (callback.message — botning o'zi)
+    lang = _lang(uid)
+    try:
+        _prefix, token, choice = callback.data.split(":", 2)
+    except ValueError:
+        await callback.answer()
+        return
+    item = _pending.get(token)
+    if not item or item[0] != uid or choice not in ("h", "v"):
+        await callback.answer(ct("format_expired", lang), show_alert=True)
+        return
+    _uid, url, start, end, _ts = item
+    vertical = choice == "v"
+    if vertical and end - start > CLIP_VERTICAL_MAX_SECONDS:
+        # So'rov saqlanib qoladi — foydalanuvchi 16:9 ni bosishi mumkin.
+        await callback.answer(
+            ct("vertical_btn_too_long", lang, max=fmt_time(CLIP_VERTICAL_MAX_SECONDS)), show_alert=True
+        )
+        return
+    _pending.pop(token, None)  # ikki marta bosilsa ikki marta ishlamasin
+    await callback.answer()
+    B = _bot_mod()
+    await B.safe_edit(
+        callback.message,
+        ct("chosen_v" if vertical else "chosen_h", lang, a=fmt_time(start), b=fmt_time(end)),
+    )
+    await _run_clip(callback.message, bot, uid, url, start, end, vertical=vertical)
