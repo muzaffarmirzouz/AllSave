@@ -30,6 +30,8 @@ DETECT_WIDTH = int(os.getenv("VERT_DETECT_WIDTH", "640"))
 OUT_HEIGHT = int(os.getenv("VERT_OUT_HEIGHT", "1280"))  # chiqish 720x1280
 SMOOTH_SECONDS = float(os.getenv("VERT_SMOOTH_SECONDS", "1.2"))
 DEADZONE = float(os.getenv("VERT_DEADZONE", "0.10"))  # kadr kengligining ulushi
+VERT_PRESET = os.getenv("VERT_PRESET", "medium").strip() or "medium"
+VERT_CRF = os.getenv("VERT_CRF", "18").strip() or "18"
 CMD_FPS = 12  # kamera holati soniyasiga necha marta yangilanadi
 
 Detector = Callable[["object"], List[Tuple[float, float, float, float]]]
@@ -220,7 +222,8 @@ def reframe_to_vertical(
         f"scale={out_w}:{out_h}:flags=lanczos,setsar=1"
     )
     cmd = ["ffmpeg", "-y", "-i", src, "-vf", vf,
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
+           "-c:v", "libx264", "-preset", VERT_PRESET, "-profile:v", "high", "-crf", VERT_CRF,
+           "-pix_fmt", "yuv420p"]
     if max_kbps and max_kbps > 0:
         cmd += ["-maxrate", f"{int(max_kbps)}k", "-bufsize", f"{int(max_kbps) * 2}k"]
     cmd += ["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out]

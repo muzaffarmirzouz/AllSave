@@ -59,7 +59,7 @@ clip_router = Router(name="clip_mode")
 # ---------------------------------------------------------------- sozlamalar
 
 CLIP_MAX_SECONDS = int(os.getenv("CLIP_MAX_SECONDS", "300"))
-CLIP_MAX_HEIGHT = (os.getenv("CLIP_MAX_HEIGHT", "720").strip() or "720")
+CLIP_MAX_HEIGHT = (os.getenv("CLIP_MAX_HEIGHT", "1080").strip() or "1080")
 CLIP_MAX_CONCURRENT = int(os.getenv("CLIP_MAX_CONCURRENT", "2"))
 clip_semaphore = asyncio.Semaphore(CLIP_MAX_CONCURRENT)
 
@@ -544,7 +544,7 @@ def _cut_local_sync(src: str, out: str, start: int, dur: int) -> None:
     """Lokal fayldan [start, start+dur] oralig'ini aniq qirqadi (qayta kodlab)."""
     cmd = [
         "ffmpeg", "-y", "-ss", str(start), "-i", src, "-t", str(dur),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "19", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out,
     ]
     r = subprocess.run(cmd, capture_output=True, timeout=900)
@@ -621,29 +621,41 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
         raise
 
 
+def _tier_for_kbps(video_kbps: int) -> int:
+    """Mavjud bitratega mos qisqa tomon (piksel). Bitrate kam bo'lsa — kichikroq
+    o'lcham, aks holda blok-blok (past sifatli) rasm chiqadi."""
+    if video_kbps < 700:
+        return 360
+    if video_kbps < 1400:
+        return 480
+    if video_kbps < 3000:
+        return 720
+    return 1080
+
+
 def _shrink_to_fit_sync(path: str, duration_s: float, limit_mb: int) -> str:
-    """Fayl limitdan katta bo'lsa — maqsadli bitrate bilan qayta kodlab
-    kichraytiradi. Sig'dira olmasa (juda uzun/bitrate juda past) ASL faylni
+    """Fayl limitdan katta bo'lsa — bitrate byudjeti ichida eng yaxshi sifatda
+    qayta kodlaydi (CRF + maxrate, sekinroq preset). Sig'dira olmasa ASL faylni
     qaytaradi, chaqiruvchi "too_large" deb xabar beradi."""
     out = path.rsplit(".", 1)[0] + "_small.mp4"
-    audio_kbps = 96
+    audio_kbps = 128 if duration_s <= 150 else 96
     total_kbit = limit_mb * 1024 * 8 * 0.92  # konteyner uchun ~8% zaxira
     video_kbps = int(total_kbit / max(duration_s, 1.0) - audio_kbps)
     if video_kbps < 150:
         return path
-    cmd = ["ffmpeg", "-y", "-i", path]
-    if video_kbps < 700:
-        # Kichik tomonni 480 gacha cheklaydi (gorizontal ham, vertikal ham to'g'ri).
-        cmd += ["-vf", "scale='if(gt(iw,ih),-2,min(480,iw))':'if(gt(iw,ih),min(480,ih),-2)'"]
+    short = _tier_for_kbps(video_kbps)
+    preset = os.getenv("CLIP_ENC_PRESET", "").strip() or ("medium" if duration_s <= 150 else "fast")
+    cmd = ["ffmpeg", "-y", "-i", path,
+           "-vf", f"scale='if(gt(iw,ih),-2,min({short},iw))':'if(gt(iw,ih),min({short},ih),-2)':flags=lanczos"]
     cmd += [
-        "-c:v", "libx264", "-preset", "veryfast",
-        "-b:v", f"{video_kbps}k", "-maxrate", f"{int(video_kbps * 1.3)}k",
-        "-bufsize", f"{video_kbps * 2}k", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", preset, "-profile:v", "high",
+        "-crf", "19", "-maxrate", f"{video_kbps}k", "-bufsize", f"{video_kbps * 2}k",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", f"{audio_kbps}k",
         "-movflags", "+faststart", out,
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=900)
+        r = subprocess.run(cmd, capture_output=True, timeout=1500)
         if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
             os.remove(path)
             return out
