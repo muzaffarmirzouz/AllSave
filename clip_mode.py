@@ -328,7 +328,12 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: 
                 holder["end"] = duration  # oxiridan oshib ketsa — video oxirigacha
         if fallback and duration and duration > CLIP_FALLBACK_MAX_VIDEO_SECONDS:
             raise ClipError("fallback_too_long", max=fmt_time(CLIP_FALLBACK_MAX_VIDEO_SECONDS))
-        ydl.process_ie_result(info, download=True)
+        try:
+            ydl.process_ie_result(info, download=True)
+        except yt_dlp.utils.DownloadError:
+            if not fallback:
+                _diagnose_section_failure(info, holder["start"])
+            raise
 
     if fallback:
         return _cut_from_full_sync(tmp_dir, info, holder)
@@ -346,6 +351,95 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: 
         "start": holder["start"],
         "end": holder["end"],
     }
+
+
+_last_diag = ""
+_diag_last_sent = 0.0
+DIAG_COOLDOWN_SECONDS = 1800
+
+
+def _scrub(text: str) -> str:
+    """Log/xabarlarda URL va proxy parollari ko'rinmasligi uchun."""
+    return re.sub(r"https?://\S+", "<url>", text or "")
+
+
+def _probe_http(url: str, headers: dict, proxy: Optional[str]) -> str:
+    """Oddiy (ffmpeg'siz) kichik Range-so'rov — asosiy yuklagich kabi."""
+    import urllib.error
+    import urllib.request
+
+    h = dict(headers or {})
+    h["Range"] = "bytes=0-1023"
+    handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
+    opener = urllib.request.build_opener(*handlers)
+    try:
+        with opener.open(urllib.request.Request(url, headers=h), timeout=30) as resp:
+            return f"HTTP {resp.status}, {len(resp.read(1024))} bayt olindi"
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code}"
+    except Exception as e:
+        return f"xato {type(e).__name__}: {_scrub(str(e))[:150]}"
+
+
+def _diagnose_section_failure(info: dict, start: int) -> None:
+    """Tezkor usul (ffmpeg bilan bo'lak yuklash) yiqilganda sababini aniqlaydi:
+    har bir format uchun ffmpeg'ni o'zimiz 1 soniyalik sinov bilan ishga tushirib
+    HAQIQIY xato matnini olamiz, va xuddi shu havolaga oddiy so'rov yuboramiz.
+    Natija logga yoziladi va bot egasiga yuboriladi (URL/parollar yashiriladi)."""
+    global _last_diag
+    lines = []
+    try:
+        B = _bot_mod()
+        proxy = None
+        yt_mode = os.environ.get("YT_PROXY_MODE", "proxy").strip().lower()
+        if getattr(B, "PROXY_URL", "") and yt_mode != "direct":
+            proxy = B.PROXY_URL
+        ver = getattr(getattr(yt_dlp, "version", None), "__version__", "?")
+        lines.append(
+            f"yt-dlp={ver}, proxy={'ha' if proxy else 'yoq'}, "
+            f"cookies={'bor' if getattr(B, 'YT_COOKIES_FILE', None) else 'YOQ'}, "
+            f"pot={'ha' if getattr(B, 'POT_PROVIDER_URL', '') else 'YOQ'}"
+        )
+        for f in info.get("requested_formats") or [info]:
+            tag = f"format={f.get('format_id')} proto={f.get('protocol')} vcodec={f.get('vcodec')} acodec={f.get('acodec')}"
+            url = f.get("url") or ""
+            if not url.startswith("http"):
+                lines.append(f"{tag}: URL yo'q yoki http emas")
+                continue
+            headers = f.get("http_headers") or info.get("http_headers") or {}
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+            hdr = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+            if hdr:
+                cmd += ["-headers", hdr]
+            if proxy:
+                cmd += ["-http_proxy", proxy]
+            cmd += ["-ss", str(start), "-i", url, "-t", "1", "-f", "null", "-"]
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=60)
+                err = _scrub(r.stderr.decode(errors="ignore")).strip()[-350:]
+                lines.append(f"{tag}\n  ffmpeg kod={r.returncode}: {err or '(bo`sh)'}")
+            except Exception as e:
+                lines.append(f"{tag}\n  ffmpeg sinovi xato berdi: {_scrub(repr(e))[:150]}")
+            lines.append(f"  oddiy Range-so'rov: {_probe_http(url, headers, proxy)}")
+    except Exception as e:
+        lines.append(f"diagnostika o'zi xato berdi: {_scrub(repr(e))[:200]}")
+    _last_diag = "\n".join(lines)
+    logger.warning("/clip DIAG:\n" + _last_diag)
+
+
+async def _notify_owner_diag(bot: Bot, text: str) -> None:
+    """Diagnostikani bot egalariga (OWNER_CHAT_IDS) yuboradi — kamida
+    DIAG_COOLDOWN_SECONDS oralig'ida bir marta."""
+    global _diag_last_sent
+    now = time.monotonic()
+    if _diag_last_sent and now - _diag_last_sent < DIAG_COOLDOWN_SECONDS:
+        return
+    _diag_last_sent = now
+    for owner_id in getattr(_bot_mod(), "OWNER_CHAT_IDS", []) or []:
+        try:
+            await bot.send_message(owner_id, "🔧 /clip diagnostika (tezkor usul yiqildi):\n\n" + text[:3500])
+        except Exception as e:
+            logger.warning(f"/clip diagnostikani egaga yuborib bo'lmadi: {e}")
 
 
 def _cut_local_sync(src: str, out: str, start: int, dur: int) -> None:
@@ -392,7 +486,7 @@ def _clean_dir(tmp_dir: str) -> None:
             pass
 
 
-async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_fallback=None) -> dict:
+async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_fallback=None, on_diag=None) -> dict:
     """1) Tezkor usul: ffmpeg faqat kerakli bo'lakni yuklaydi.
     2) U ffmpeg/HTTP xatosi bilan yiqilsa — zaxira usul (past sifatli to'liq
        yuklash + lokal qirqish). Tezkor usul yiqilganini bir muddat eslab
@@ -408,6 +502,8 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
         except yt_dlp.utils.DownloadError as e:
             err = str(e).lower()
             logger.warning(f"/clip tezkor usul xatosi: {e}")
+            if on_diag is not None and _last_diag:
+                await on_diag(_last_diag)
             if not CLIP_FALLBACK or any(p in err for p in permanent_words):
                 raise
             if "ffmpeg" in err:
@@ -498,7 +594,10 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
                 async def _notice():
                     await B.safe_edit(status, ct("fallback_notice", lang))
 
-                info = await _download_with_retry(url, start, end, tmp_dir, on_fallback=_notice)
+                async def _diag(text):
+                    await _notify_owner_diag(bot, text)
+
+                info = await _download_with_retry(url, start, end, tmp_dir, on_fallback=_notice, on_diag=_diag)
 
             path = info["path"]
             start, end = info["start"], info["end"]
