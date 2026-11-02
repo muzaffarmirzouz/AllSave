@@ -40,6 +40,11 @@ import yt_dlp
 # main() funksiyasiga qarang).
 from caption_mode import caption_router
 
+# /clip rejimi — YouTube videodan kerakli vaqt oralig'ini qirqib beradi.
+# MUHIM: bu ham `router`dan OLDIN (va caption_router'dan ham oldin) include
+# qilinishi shart (pastdagi main() funksiyasiga qarang).
+from clip_mode import clip_router
+
 
 class WatermarkStates(StatesGroup):
     # "Videoga Logo qo'yish" tugmasi bosilgandan keyin, FAQAT keyingi bitta
@@ -506,7 +511,8 @@ TEXTS = {
             f"(Video hajmi {MAX_TELEGRAM_MB}MB'dan oshmasligi kerak)\n\n"
             "\u2728 Qo'shimcha xizmatlar:\n"
             "\U0001F3A8 Videoga shaxsiy logo (watermark) qo'yish\n"
-            "\U0001F4DD Videoga o'zbekcha titr (subtitr) yozish\n\n"
+            "\U0001F4DD Videoga o'zbekcha titr (subtitr) yozish\n"
+            "✂️ YouTube videodan kerakli qismni qirqib olish (/clip)\n\n"
             "Pastdagi tugmalardan foydalaning \U0001F447"
         ),
         "subscribe": (
@@ -628,7 +634,8 @@ TEXTS = {
             f"(Видео не должно превышать {MAX_TELEGRAM_MB}МБ)\n\n"
             "\u2728 Дополнительные услуги:\n"
             "\U0001F3A8 Добавление личного логотипа (водяного знака) на видео\n"
-            "\U0001F4DD Добавление узбекских субтитров на видео\n\n"
+            "\U0001F4DD Добавление узбекских субтитров на видео\n"
+            "✂️ Вырезка нужного фрагмента из видео YouTube (/clip)\n\n"
             "Используйте кнопки ниже \U0001F447"
         ),
         "subscribe": (
@@ -748,7 +755,8 @@ TEXTS = {
             f"(Videos must be under {MAX_TELEGRAM_MB}MB)\n\n"
             "\u2728 Additional services:\n"
             "\U0001F3A8 Add your personal logo (watermark) to videos\n"
-            "\U0001F4DD Add Uzbek subtitles to videos\n\n"
+            "\U0001F4DD Add Uzbek subtitles to videos\n"
+            "✂️ Cut a part of a YouTube video (/clip)\n\n"
             "Use the buttons below \U0001F447"
         ),
         "subscribe": (
@@ -872,9 +880,9 @@ def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
 
 
 MAIN_MENU_LABELS = {
-    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "lang": "\U0001F310 Til"},
-    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "lang": "\U0001F310 Язык"},
-    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "lang": "\U0001F310 Language"},
+    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "clip": "✂️ YouTube'dan qirqib olish", "lang": "\U0001F310 Til"},
+    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "clip": "✂️ Вырезать фрагмент из YouTube", "lang": "\U0001F310 Язык"},
+    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "clip": "✂️ Cut a clip from YouTube", "lang": "\U0001F310 Language"},
 }
 
 
@@ -884,6 +892,7 @@ def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=labels["logo"], callback_data="start_setlogo")],
         [InlineKeyboardButton(text=labels["outro"], callback_data="start_setoutro")],
         [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
+        [InlineKeyboardButton(text=labels["clip"], callback_data="mode_clip")],
         [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
     ])
 
@@ -2550,6 +2559,9 @@ async def main():
     # MUHIM: caption_router `router`dan OLDIN include qilinishi shart —
     # shunda /caption va CaptionStates jarayonidagi xabarlar avval
     # caption_mode.py'dagi handlerlarga tekshiriladi.
+    # clip_router eng birinchi: u faqat "YouTube havola + vaqt oralig'i" yoki
+    # /clip jarayonidagi xabarlarni ushlaydi, oddiy havolalarga tegmaydi.
+    dp.include_router(clip_router)
     dp.include_router(caption_router)
     dp.include_router(router)
 
@@ -2563,6 +2575,7 @@ async def main():
         BotCommand(command="setposition", description="Logo videoda qayerda chiqishini tanlash"),
         BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
         BotCommand(command="captionoff", description="Titr qo'shishni o'chirish"),
+        BotCommand(command="clip", description="YouTube videodan kerakli qismni qirqib olish"),
     ]
     # Hamma foydalanuvchi uchun umumiy (standart) buyruqlar ro'yxati —
     # cookies buyruqlari BU YERDA YO'Q, shuning uchun oddiy foydalanuvchilar
