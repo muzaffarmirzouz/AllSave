@@ -332,7 +332,7 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: 
             ydl.process_ie_result(info, download=True)
         except yt_dlp.utils.DownloadError:
             if not fallback:
-                _diagnose_section_failure(info, holder["start"])
+                _diagnose_section_failure(info, holder["start"], ydl)
             raise
 
     if fallback:
@@ -381,7 +381,32 @@ def _probe_http(url: str, headers: dict, proxy: Optional[str]) -> str:
         return f"xato {type(e).__name__}: {_scrub(str(e))[:150]}"
 
 
-def _diagnose_section_failure(info: dict, start: int) -> None:
+def _probe_ydl(ydl, url: str, headers: dict, range_hdr: str, impersonate: bool) -> str:
+    """yt-dlp'ning O'Z so'rov mexanizmi (asosiy yuklagich ishlatadigan) bilan
+    kichik sinov so'rovi."""
+    try:
+        from yt_dlp.networking import Request
+
+        ext = {}
+        if impersonate:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+
+            ext["impersonate"] = ImpersonateTarget("chrome")
+        h = dict(headers or {})
+        h["Range"] = range_hdr
+        resp = ydl.urlopen(Request(url, headers=h, extensions=ext))
+        n = len(resp.read(1024))
+        try:
+            resp.close()
+        except Exception:
+            pass
+        return f"HTTP {getattr(resp, 'status', '?')}, {n} bayt"
+    except Exception as e:
+        code = getattr(e, "status", None)
+        return f"HTTP {code}" if code else f"xato {type(e).__name__}: {_scrub(str(e))[:120]}"
+
+
+def _diagnose_section_failure(info: dict, start: int, ydl=None) -> None:
     """Tezkor usul (ffmpeg bilan bo'lak yuklash) yiqilganda sababini aniqlaydi:
     har bir format uchun ffmpeg'ni o'zimiz 1 soniyalik sinov bilan ishga tushirib
     HAQIQIY xato matnini olamiz, va xuddi shu havolaga oddiy so'rov yuboramiz.
@@ -421,6 +446,14 @@ def _diagnose_section_failure(info: dict, start: int) -> None:
             except Exception as e:
                 lines.append(f"{tag}\n  ffmpeg sinovi xato berdi: {_scrub(repr(e))[:150]}")
             lines.append(f"  oddiy Range-so'rov: {_probe_http(url, headers, proxy)}")
+            if ydl is not None:
+                lines.append(f"  yt-dlp o'z so'rovi (1KB): {_probe_ydl(ydl, url, headers, 'bytes=0-1023', False)}")
+                lines.append(f"  yt-dlp o'z so'rovi (10MB-Range): {_probe_ydl(ydl, url, headers, 'bytes=0-10485759', False)}")
+                lines.append(f"  yt-dlp + chrome-impersonate (1KB): {_probe_ydl(ydl, url, headers, 'bytes=0-1023', True)}")
+            lines.append(
+                f"  impersonate-bayrog'i={f.get('impersonate')!r}, "
+                f"downloader_options={f.get('downloader_options')!r}"
+            )
     except Exception as e:
         lines.append(f"diagnostika o'zi xato berdi: {_scrub(repr(e))[:200]}")
     _last_diag = "\n".join(lines)
