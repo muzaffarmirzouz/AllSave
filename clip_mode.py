@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Optional, Tuple
 
 import yt_dlp
@@ -64,6 +65,20 @@ clip_semaphore = asyncio.Semaphore(CLIP_MAX_CONCURRENT)
 TELEGRAM_LIMIT_MB = 50
 # Telegram chegarasidan biroz pastroq — konteyner qo'shimcha hajmi uchun zaxira.
 SAFE_LIMIT_MB = 48
+
+# Tezkor usul (ffmpeg bilan faqat kerakli bo'lakni yuklash) ba'zi serverlarda
+# YouTube tomonidan rad etiladi ("ffmpeg exited with code 8" = HTTP 4xx xato).
+# Shunda ISHONCHLI, lekin sekinroq zaxira usuli ishlatiladi: past sifatli
+# (standart 360p) video odatiy (native) yuklagich bilan to'liq yuklanadi,
+# so'ng kerakli qism lokal ffmpeg bilan qirqiladi.
+CLIP_FALLBACK = os.getenv("CLIP_FALLBACK", "1").strip().lower() not in ("0", "false", "no")
+CLIP_FALLBACK_HEIGHT = (os.getenv("CLIP_FALLBACK_HEIGHT", "360").strip() or "360")
+CLIP_FALLBACK_MAX_VIDEO_SECONDS = int(os.getenv("CLIP_FALLBACK_MAX_VIDEO_SECONDS", "7200"))
+CLIP_FALLBACK_MAX_MB = int(os.getenv("CLIP_FALLBACK_MAX_MB", "700"))
+# Tezkor usul ffmpeg xatosi bilan yiqilsa, shuncha soniya uni urinmay,
+# to'g'ridan-to'g'ri zaxira usulga o'tamiz (har so'rovda ~20 soniya yo'qotmaslik uchun).
+CLIP_SECTION_RETRY_SECONDS = int(os.getenv("CLIP_SECTION_RETRY_SECONDS", "1800"))
+_section_skip_until = 0.0
 
 
 class ClipStates(StatesGroup):
@@ -117,6 +132,8 @@ CLIP_TEXTS = {
         "youtube_blocked": "❌ YouTube hozir so'rovni rad etdi. Birozdan keyin qayta urinib ko'ring. Takrorlansa, bot egasiga xabar bering.",
         "too_large": "❌ Qirqilgan qism Telegram chegarasiga ({max} MB) sig'madi. Qisqaroq oraliq tanlang.",
         "unexpected_error": "❌ Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
+        "fallback_notice": "⏳ Tezkor usul ishlamadi, boshqa usulda yuklanmoqda — bu bir necha daqiqa olishi mumkin, iltimos kuting...",
+        "fallback_too_long": "❌ Bu video juda uzun, shuning uchun qirqib bo'lmadi (zaxira usul {max} gacha bo'lgan videolar uchun ishlaydi).",
     },
     "ru": {
         "ask_link": (
@@ -140,6 +157,8 @@ CLIP_TEXTS = {
         "youtube_blocked": "❌ YouTube сейчас отклонил запрос. Попробуйте чуть позже. Если повторяется — сообщите владельцу бота.",
         "too_large": "❌ Фрагмент не поместился в лимит Telegram ({max} МБ). Выберите промежуток короче.",
         "unexpected_error": "❌ Произошла ошибка, попробуйте ещё раз чуть позже.",
+        "fallback_notice": "⏳ Быстрый способ не сработал, скачиваю другим способом — это может занять несколько минут, подождите...",
+        "fallback_too_long": "❌ Видео слишком длинное, вырезать не удалось (запасной способ работает для видео до {max}).",
     },
     "en": {
         "ask_link": (
@@ -163,6 +182,8 @@ CLIP_TEXTS = {
         "youtube_blocked": "❌ YouTube rejected the request right now. Please try again in a moment. If it keeps happening, tell the bot owner.",
         "too_large": "❌ The clip didn't fit Telegram's {max} MB limit. Please choose a shorter range.",
         "unexpected_error": "❌ Something went wrong, please try again in a moment.",
+        "fallback_notice": "⏳ The fast method didn't work, trying another way — this may take a few minutes, please wait...",
+        "fallback_too_long": "❌ This video is too long to cut (the backup method works for videos up to {max}).",
     },
 }
 
@@ -237,7 +258,7 @@ def fmt_time(sec: int) -> str:
 
 # ------------------------------------------------------ yuklab olish va qirqish
 
-def _build_ydl_opts(tmp_dir: str, ranges_fn) -> dict:
+def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False) -> dict:
     """bot.py'dagi YouTube sozlamalari (cookies, proxy, JS runtime, PO token)
     bilan BIR XIL, faqat butun video o'rniga `download_ranges` bilan."""
     B = _bot_mod()
@@ -275,10 +296,18 @@ def _build_ydl_opts(tmp_dir: str, ranges_fn) -> dict:
             break
     if getattr(B, "POT_PROVIDER_URL", ""):
         opts["extractor_args"] = {"youtubepot-bgutilhttp": {"base_url": [B.POT_PROVIDER_URL]}}
+    if fallback:
+        # Zaxira usul: ffmpeg-bo'lak yo'q, past sifatli BUTUN video odatiy
+        # yuklagich bilan (asosiy bot bilan bir xil yo'l) yuklanadi.
+        opts.pop("download_ranges", None)
+        opts.pop("force_keyframes_at_cuts", None)
+        opts["outtmpl"] = os.path.join(tmp_dir, "full.%(ext)s")
+        opts["format_sort"] = [f"res:{CLIP_FALLBACK_HEIGHT}", "fps", "vcodec:h264"]
+        opts["max_filesize"] = CLIP_FALLBACK_MAX_MB * 1024 * 1024
     return opts
 
 
-def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str) -> dict:
+def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str, fallback: bool = False) -> dict:
     """Bloklaydigan: avval video ma'lumotini oladi (uzunlik, live emasligini
     tekshiradi), keyin FAQAT [start, end] oralig'ini yuklab oladi."""
     holder = {"start": start, "end": end}
@@ -286,7 +315,7 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str) -> dict:
     def ranges_fn(info_dict, ydl):
         return [{"start_time": holder["start"], "end_time": holder["end"]}]
 
-    with yt_dlp.YoutubeDL(_build_ydl_opts(tmp_dir, ranges_fn)) as ydl:
+    with yt_dlp.YoutubeDL(_build_ydl_opts(tmp_dir, None if fallback else ranges_fn, fallback)) as ydl:
         info = ydl.extract_info(url, download=False)
         if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
             raise ClipError("live")
@@ -297,7 +326,12 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str) -> dict:
                 raise ClipError("out_of_range", dur=fmt_time(duration))
             if holder["end"] > duration:
                 holder["end"] = duration  # oxiridan oshib ketsa — video oxirigacha
+        if fallback and duration and duration > CLIP_FALLBACK_MAX_VIDEO_SECONDS:
+            raise ClipError("fallback_too_long", max=fmt_time(CLIP_FALLBACK_MAX_VIDEO_SECONDS))
         ydl.process_ie_result(info, download=True)
+
+    if fallback:
+        return _cut_from_full_sync(tmp_dir, info, holder)
 
     candidates = [
         p for p in glob.glob(os.path.join(tmp_dir, "clip*"))
@@ -314,23 +348,82 @@ def _clip_download_sync(url: str, start: int, end: int, tmp_dir: str) -> dict:
     }
 
 
-async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, attempts: int = 2) -> dict:
-    last = None
-    for attempt in range(1, attempts + 1):
+def _cut_local_sync(src: str, out: str, start: int, dur: int) -> None:
+    """Lokal fayldan [start, start+dur] oralig'ini aniq qirqadi (qayta kodlab)."""
+    cmd = [
+        "ffmpeg", "-y", "-ss", str(start), "-i", src, "-t", str(dur),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out,
+    ]
+    r = subprocess.run(cmd, capture_output=True, timeout=900)
+    if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+        logger.error(f"/clip lokal qirqishda xato: {r.stderr[-400:]!r}")
+        raise ClipError("download_failed")
+
+
+def _cut_from_full_sync(tmp_dir: str, info: dict, holder: dict) -> dict:
+    fulls = [
+        p for p in glob.glob(os.path.join(tmp_dir, "full*"))
+        if p.lower().endswith((".mp4", ".mkv", ".webm")) and os.path.getsize(p) > 0
+    ]
+    if not fulls:
+        raise ClipError("download_failed")
+    src = max(fulls, key=os.path.getsize)
+    out = os.path.join(tmp_dir, "clip_fb.mp4")
+    _cut_local_sync(src, out, holder["start"], holder["end"] - holder["start"])
+    try:
+        os.remove(src)  # katta fayl — joyni darhol bo'shatamiz
+    except OSError:
+        pass
+    return {
+        "path": out,
+        "title": (info.get("title") or "").strip(),
+        "start": holder["start"],
+        "end": holder["end"],
+    }
+
+
+def _clean_dir(tmp_dir: str) -> None:
+    for p in glob.glob(os.path.join(tmp_dir, "*")):
         try:
-            return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir)
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
+async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_fallback=None) -> dict:
+    """1) Tezkor usul: ffmpeg faqat kerakli bo'lakni yuklaydi.
+    2) U ffmpeg/HTTP xatosi bilan yiqilsa — zaxira usul (past sifatli to'liq
+       yuklash + lokal qirqish). Tezkor usul yiqilganini bir muddat eslab
+       qolamiz va keyingi so'rovlarda darhol zaxiraga o'tamiz."""
+    global _section_skip_until
+    permanent_words = ("private", "unavailable", "removed", "not available", "sign in", "not a bot")
+
+    if not CLIP_FALLBACK or time.monotonic() >= _section_skip_until:
+        try:
+            return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, False)
         except ClipError:
             raise
         except yt_dlp.utils.DownloadError as e:
-            last = e
             err = str(e).lower()
-            permanent = any(p in err for p in ("private", "unavailable", "removed", "not available", "sign in", "not a bot"))
-            if attempt < attempts and not permanent:
-                logger.warning(f"/clip yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {e}")
-                await asyncio.sleep(4 * attempt)
-                continue
-            raise
-    raise last
+            logger.warning(f"/clip tezkor usul xatosi: {e}")
+            if not CLIP_FALLBACK or any(p in err for p in permanent_words):
+                raise
+            if "ffmpeg" in err:
+                _section_skip_until = time.monotonic() + CLIP_SECTION_RETRY_SECONDS
+                logger.warning(
+                    f"/clip: tezkor usul {CLIP_SECTION_RETRY_SECONDS}s davomida o'tkazib yuboriladi, zaxira usul ishlatiladi"
+                )
+
+    if on_fallback is not None:
+        await on_fallback()
+    await asyncio.to_thread(_clean_dir, tmp_dir)
+    try:
+        return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, True)
+    except yt_dlp.utils.DownloadError as e:
+        logger.warning(f"/clip zaxira usul ham xato berdi: {e}")
+        raise
 
 
 def _shrink_to_fit_sync(path: str, duration_s: float, limit_mb: int) -> str:
@@ -402,7 +495,10 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
             async with clip_semaphore:
                 if was_queued:
                     await B.safe_edit(status, ct("downloading", lang))
-                info = await _download_with_retry(url, start, end, tmp_dir)
+                async def _notice():
+                    await B.safe_edit(status, ct("fallback_notice", lang))
+
+                info = await _download_with_retry(url, start, end, tmp_dir, on_fallback=_notice)
 
             path = info["path"]
             start, end = info["start"], info["end"]
