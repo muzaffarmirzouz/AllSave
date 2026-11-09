@@ -62,6 +62,8 @@ CLIP_MAX_SECONDS = int(os.getenv("CLIP_MAX_SECONDS", "300"))
 CLIP_MAX_HEIGHT = (os.getenv("CLIP_MAX_HEIGHT", "1080").strip() or "1080")
 CLIP_MAX_CONCURRENT = int(os.getenv("CLIP_MAX_CONCURRENT", "2"))
 clip_semaphore = asyncio.Semaphore(CLIP_MAX_CONCURRENT)
+CLIP_DOWNLOAD_TIMEOUT = int(os.getenv("CLIP_DOWNLOAD_TIMEOUT", "420"))  # bitta yuklash uchun maks. soniya
+CLIP_QUEUE_TIMEOUT = int(os.getenv("CLIP_QUEUE_TIMEOUT", "600"))  # navbatda maks. kutish
 
 # Vertikal (9:16) rejim: odam yuzini kuzatib kesadi (vertical.py). 16:9 dan 9:16
 # kesilganda kadr kengligi uchdan biriga tushadi, shuning uchun manba sifati
@@ -324,6 +326,7 @@ def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False, source
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "socket_timeout": 30,
         "postprocessor_args": {"merger": ["-movflags", "+faststart"]},
     }
     if getattr(B, "YT_COOKIES_FILE", None):
@@ -809,7 +812,14 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
             was_queued = clip_semaphore.locked()
             if was_queued:
                 await B.safe_edit(status, ct("queued", lang))
-            async with clip_semaphore:
+            # Navbatda ham cheksiz kutmaymiz (boshqa ish osilib qolgan bo'lishi mumkin).
+            try:
+                await asyncio.wait_for(clip_semaphore.acquire(), CLIP_QUEUE_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error("/clip: navbat vaqti tugadi — semafor band (osilib qolgan ish bo'lishi mumkin)")
+                await _notify_owner_error(bot, "navbat", RuntimeError("clip semaforini olib bo'lmadi, band ishlar osilib qolgan bo'lishi mumkin"))
+                raise ClipError("download_failed")
+            try:
                 if was_queued:
                     await B.safe_edit(status, ct("downloading", lang))
                 async def _notice():
@@ -818,10 +828,20 @@ async def _run_clip(message: Message, bot: Bot, user_id: int, url: str, start: i
                 async def _diag(text):
                     await _notify_owner_diag(bot, text)
 
-                info = await _download_with_retry(
-                    url, start, end, tmp_dir, on_fallback=_notice, on_diag=_diag,
-                    source_height=CLIP_VERTICAL_SOURCE_HEIGHT if vertical else None,
-                )
+                try:
+                    info = await asyncio.wait_for(
+                        _download_with_retry(
+                            url, start, end, tmp_dir, on_fallback=_notice, on_diag=_diag,
+                            source_height=CLIP_VERTICAL_SOURCE_HEIGHT if vertical else None,
+                        ),
+                        CLIP_DOWNLOAD_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"/clip: yuklash {CLIP_DOWNLOAD_TIMEOUT}s ichida tugamadi — bekor qilindi")
+                    await _notify_owner_error(bot, "yuklash", RuntimeError(f"yuklash {CLIP_DOWNLOAD_TIMEOUT}s dan oshdi (osilib qoldi)"))
+                    raise ClipError("download_failed")
+            finally:
+                clip_semaphore.release()
 
             path = info["path"]
             start, end = info["start"], info["end"]
