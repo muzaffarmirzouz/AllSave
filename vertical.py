@@ -28,8 +28,11 @@ logger = logging.getLogger(__name__)
 SAMPLE_FPS = float(os.getenv("VERT_SAMPLE_FPS", "4"))
 DETECT_WIDTH = int(os.getenv("VERT_DETECT_WIDTH", "640"))
 OUT_HEIGHT = int(os.getenv("VERT_OUT_HEIGHT", "1280"))  # chiqish 720x1280
-SMOOTH_SECONDS = float(os.getenv("VERT_SMOOTH_SECONDS", "1.2"))
-DEADZONE = float(os.getenv("VERT_DEADZONE", "0.10"))  # kadr kengligining ulushi
+SMOOTH_SECONDS = float(os.getenv("VERT_SMOOTH_SECONDS", "0.8"))
+DEADZONE = float(os.getenv("VERT_DEADZONE", "0.16"))  # kesim kengligining ulushi: odam shu oraliqda qimirlasa kamera turadi
+OUTLIER = float(os.getenv("VERT_OUTLIER", "0.15"))  # qo'shni kadrlardagi o'rtachadan shuncha (kadr kengligi ulushi) chetga chiqqan "yuz" — xato deb tashlanadi
+SETTLE_SECONDS = float(os.getenv("VERT_SETTLE", "0.5"))  # kamera maqsadga yetib borish vaqti (kattaroq = silliqroq)
+MAX_SPEED = float(os.getenv("VERT_MAX_SPEED", "0.5"))  # kamera tezligi chegarasi: kesim kengligining ulushi / soniya
 VERT_PRESET = os.getenv("VERT_PRESET", "medium").strip() or "medium"
 VERT_CRF = os.getenv("VERT_CRF", "18").strip() or "18"
 CMD_FPS = 12  # kamera holati soniyasiga necha marta yangilanadi
@@ -146,12 +149,44 @@ def detect_track(src: str, src_w: int, src_h: int, detector: Optional[Detector])
 
 # ----------------------------------------------------------- kamera harakati
 
-def compute_crop_x(samples: List[Optional[float]], duration: float, src_w: int, crop_w: int):
-    """-> (vaqtlar, x_pozitsiyalar). Yuz joylaridan silliq kamera yo'li."""
+def clean_samples(samples: List[Optional[float]]) -> List[Optional[float]]:
+    """Noto'g'ri aniqlashlarni (qo'shni kadrlardagi median joydan keskin chetga
+    chiqqanlarini) tashlaydi, qolganini 3 ta median bilan tekislaydi."""
     import numpy as np
 
+    n = len(samples)
+    if n == 0:
+        return []
+    arr = np.array([np.nan if v is None else float(v) for v in samples])
+    out = arr.copy()
+    half = max(1, int(round(1.0 * SAMPLE_FPS)))  # ±1 soniya
+    for i in range(n):
+        if np.isnan(arr[i]):
+            continue
+        win = arr[max(0, i - half): i + half + 1]
+        win = win[~np.isnan(win)]
+        if len(win) >= 3 and abs(arr[i] - float(np.median(win))) > OUTLIER:
+            out[i] = np.nan
+    res = out.copy()
+    for i in range(n):
+        if np.isnan(out[i]):
+            continue
+        win = out[max(0, i - 1): i + 2]
+        win = win[~np.isnan(win)]
+        res[i] = float(np.median(win))
+    return [None if np.isnan(v) else float(v) for v in res]
+
+
+def compute_crop_x(samples: List[Optional[float]], duration: float, src_w: int, crop_w: int):
+    """-> (vaqtlar, x_pozitsiyalar). Yuz joylaridan silliq kamera yo'li:
+    xato aniqlashlarni tozalash -> Gauss silliqlash -> "o'lik zona" ->
+    tezlik chegarali yumshoq ergashish."""
+    import numpy as np
+
+    samples = clean_samples(samples)
     dur = max(float(duration or 0.0), len(samples) / SAMPLE_FPS, 0.5)
-    t_cmd = np.arange(0.0, dur + 1.0 / CMD_FPS, 1.0 / CMD_FPS)
+    dt = 1.0 / CMD_FPS
+    t_cmd = np.arange(0.0, dur + dt, dt)
 
     valid = [(i / SAMPLE_FPS, c) for i, c in enumerate(samples) if c is not None]
     if valid:
@@ -160,22 +195,35 @@ def compute_crop_x(samples: List[Optional[float]], duration: float, src_w: int, 
     else:
         subject = np.full_like(t_cmd, src_w / 2.0)
 
-    # "O'lik zona": odam kadr markazidan ±dz dan oshmaguncha kamera joyida turadi.
+    # 1) Gauss silliqlash (kechikishsiz, markazlashgan).
+    sigma = max(SMOOTH_SECONDS * CMD_FPS, 0.5)
+    rad = int(3 * sigma) + 1
+    kern = np.exp(-0.5 * (np.arange(-rad, rad + 1) / sigma) ** 2)
+    kern /= kern.sum()
+    padded = np.pad(subject, rad, mode="edge")
+    subject = np.convolve(padded, kern, mode="valid")
+
+    # 2) "O'lik zona": odam kesim markazidan ±dz dan oshmaguncha maqsad joyida turadi.
     dz = DEADZONE * crop_w
-    cam = np.empty_like(subject)
+    target = np.empty_like(subject)
     c = subject[0]
     for i, v in enumerate(subject):
         d = v - c
         if abs(d) > dz:
             c += d - np.sign(d) * dz
-        cam[i] = c
+        target[i] = c
 
-    # Silliqlash (markazlashgan o'rtacha — kechikishsiz).
-    k = max(1, int(SMOOTH_SECONDS * CMD_FPS))
-    padded = np.pad(cam, (k // 2, k - 1 - k // 2), mode="edge")
-    smooth = np.convolve(padded, np.ones(k) / k, mode="valid")
+    # 3) Maqsadga yumshoq (eksponensial) va tezligi cheklangan ergashish.
+    alpha = 1.0 - float(np.exp(-dt / max(SETTLE_SECONDS, 0.05)))
+    vmax = MAX_SPEED * crop_w * dt
+    cam = np.empty_like(target)
+    p = target[0]
+    for i, tg in enumerate(target):
+        step = (tg - p) * alpha
+        p += max(-vmax, min(vmax, step))
+        cam[i] = p
 
-    x = np.clip(smooth - crop_w / 2.0, 0, max(src_w - crop_w, 0))
+    x = np.clip(cam - crop_w / 2.0, 0, max(src_w - crop_w, 0))
     return t_cmd, x
 
 
