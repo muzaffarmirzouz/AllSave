@@ -501,7 +501,10 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Til o'zbekcha qilib saqlandi.",
         "start": (
-            "\U0001F44B Salom! Men video va rasm yuklab beruvchi botman.\n\n"
+            "\U0001F44B Salom! Men video, rasm va musiqa yuklab beruvchi botman.\n\n"
+            "\U0001F195 YANGI! \U0001F3B5 Musiqa bo'limi:\n"
+            "• Qo'shiq yoki ijrochi nomini yozing — MP3 qilib yuboraman\n"
+            "• Video yoki audio yuboring — undagi qo'shiqni topib beraman\n\n"
             "\U0001F4E5 Quyidagi platformalardan video/rasm havolasini yuboring — "
             "yuklab, sizga jo'nataman:\n\n"
             "\U0001F4F8 Instagram (Reels, postlar, rasmlar)\n"
@@ -518,7 +521,7 @@ TEXTS = {
             "\U0001F3A8 Videoga shaxsiy logo (watermark) qo'yish\n"
             "\U0001F4DD Videoga o'zbekcha titr (subtitr) yozish\n"
             "✂️ YouTube videodan kerakli qismni qirqib olish (/clip)\n"
-            "\U0001F3B5 Qo'shiq nomini yozing — MP3 qilib beraman; video/audio yuborsangiz, undagi musiqani topaman (/music)\n\n"
+            "\n"
             "Pastdagi tugmalardan foydalaning \U0001F447"
         ),
         "subscribe": (
@@ -625,7 +628,10 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Язык сохранён: русский.",
         "start": (
-            "\U0001F44B Привет! Я бот для скачивания видео и фото.\n\n"
+            "\U0001F44B Привет! Я бот для скачивания видео, фото и музыки.\n\n"
+            "\U0001F195 НОВОЕ! \U0001F3B5 Раздел музыки:\n"
+            "• Напишите название песни или исполнителя — пришлю MP3\n"
+            "• Отправьте видео или аудио — найду песню, которая в нём играет\n\n"
             "\U0001F4E5 Отправьте ссылку на видео/фото с одной из платформ — "
             "скачаю и пришлю вам:\n\n"
             "\U0001F4F8 Instagram (Reels, посты, фото)\n"
@@ -642,7 +648,7 @@ TEXTS = {
             "\U0001F3A8 Добавление личного логотипа (водяного знака) на видео\n"
             "\U0001F4DD Добавление узбекских субтитров на видео\n"
             "✂️ Вырезка нужного фрагмента из видео YouTube (/clip)\n"
-            "\U0001F3B5 Напишите название песни — пришлю MP3; отправьте видео/аудио — найду музыку из него (/music)\n\n"
+            "\n"
             "Используйте кнопки ниже \U0001F447"
         ),
         "subscribe": (
@@ -747,7 +753,10 @@ TEXTS = {
         "choose_lang": "Tilni tanlang / Выберите язык / Choose language:",
         "lang_saved": "\u2705 Language set to English.",
         "start": (
-            "\U0001F44B Hi! I'm a bot for downloading videos and photos.\n\n"
+            "\U0001F44B Hi! I'm a bot for downloading videos, photos and music.\n\n"
+            "\U0001F195 NEW! \U0001F3B5 Music section:\n"
+            "• Type a song or artist name — I'll send you the MP3\n"
+            "• Send a video or audio — I'll find the song playing in it\n\n"
             "\U0001F4E5 Send me a video/photo link from one of these platforms "
             "and I'll download it for you:\n\n"
             "\U0001F4F8 Instagram (Reels, posts, photos)\n"
@@ -764,7 +773,7 @@ TEXTS = {
             "\U0001F3A8 Add your personal logo (watermark) to videos\n"
             "\U0001F4DD Add Uzbek subtitles to videos\n"
             "✂️ Cut a part of a YouTube video (/clip)\n"
-            "\U0001F3B5 Type a song name — I'll send the MP3; send a video/audio — I'll find its music (/music)\n\n"
+            "\n"
             "Use the buttons below \U0001F447"
         ),
         "subscribe": (
