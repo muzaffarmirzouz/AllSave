@@ -7,3 +7,5 @@ transformers
 torch
 deno
 # force rebuild
+shazamio
+audioop-lts; python_version >= "3.13"

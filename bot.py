@@ -45,6 +45,11 @@ from caption_mode import caption_router
 # qilinishi shart (pastdagi main() funksiyasiga qarang).
 from clip_mode import clip_router
 
+# Musiqa bo'limi — qo'shiq qidirish (MP3) va video/audio'dagi musiqani
+# aniqlash (Shazam). MUHIM: `router`dan KEYIN (eng oxirida) include
+# qilinadi — u faqat boshqa bo'limlar ushlamagan matn/video/audio'ni oladi.
+from music_mode import music_router, find_music_keyboard
+
 
 class WatermarkStates(StatesGroup):
     # "Videoga Logo qo'yish" tugmasi bosilgandan keyin, FAQAT keyingi bitta
@@ -512,7 +517,8 @@ TEXTS = {
             "\u2728 Qo'shimcha xizmatlar:\n"
             "\U0001F3A8 Videoga shaxsiy logo (watermark) qo'yish\n"
             "\U0001F4DD Videoga o'zbekcha titr (subtitr) yozish\n"
-            "✂️ YouTube videodan kerakli qismni qirqib olish (/clip)\n\n"
+            "✂️ YouTube videodan kerakli qismni qirqib olish (/clip)\n"
+            "\U0001F3B5 Qo'shiq nomini yozing — MP3 qilib beraman; video/audio yuborsangiz, undagi musiqani topaman (/music)\n\n"
             "Pastdagi tugmalardan foydalaning \U0001F447"
         ),
         "subscribe": (
@@ -635,7 +641,8 @@ TEXTS = {
             "\u2728 Дополнительные услуги:\n"
             "\U0001F3A8 Добавление личного логотипа (водяного знака) на видео\n"
             "\U0001F4DD Добавление узбекских субтитров на видео\n"
-            "✂️ Вырезка нужного фрагмента из видео YouTube (/clip)\n\n"
+            "✂️ Вырезка нужного фрагмента из видео YouTube (/clip)\n"
+            "\U0001F3B5 Напишите название песни — пришлю MP3; отправьте видео/аудио — найду музыку из него (/music)\n\n"
             "Используйте кнопки ниже \U0001F447"
         ),
         "subscribe": (
@@ -756,7 +763,8 @@ TEXTS = {
             "\u2728 Additional services:\n"
             "\U0001F3A8 Add your personal logo (watermark) to videos\n"
             "\U0001F4DD Add Uzbek subtitles to videos\n"
-            "✂️ Cut a part of a YouTube video (/clip)\n\n"
+            "✂️ Cut a part of a YouTube video (/clip)\n"
+            "\U0001F3B5 Type a song name — I'll send the MP3; send a video/audio — I'll find its music (/music)\n\n"
             "Use the buttons below \U0001F447"
         ),
         "subscribe": (
@@ -880,9 +888,9 @@ def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
 
 
 MAIN_MENU_LABELS = {
-    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "clip": "✂️ YouTube'dan qirqib olish", "lang": "\U0001F310 Til"},
-    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "clip": "✂️ Вырезать фрагмент из YouTube", "lang": "\U0001F310 Язык"},
-    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "clip": "✂️ Cut a clip from YouTube", "lang": "\U0001F310 Language"},
+    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "clip": "✂️ YouTube'dan qirqib olish", "music": "\U0001F3B5 Musiqa qidirish", "lang": "\U0001F310 Til"},
+    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "clip": "✂️ Вырезать фрагмент из YouTube", "music": "\U0001F3B5 Поиск музыки", "lang": "\U0001F310 Язык"},
+    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "clip": "✂️ Cut a clip from YouTube", "music": "\U0001F3B5 Music search", "lang": "\U0001F310 Language"},
 }
 
 
@@ -893,6 +901,7 @@ def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=labels["outro"], callback_data="start_setoutro")],
         [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
         [InlineKeyboardButton(text=labels["clip"], callback_data="mode_clip")],
+        [InlineKeyboardButton(text=labels["music"], callback_data="mode_music")],
         [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
     ])
 
@@ -955,7 +964,9 @@ async def cb_set_lang(callback: CallbackQuery, bot: Bot):
     if not await is_subscribed(bot, callback.from_user.id):
         await callback.message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
     else:
-        await callback.message.answer(t("start", lang))
+        # Bosh menyu tugmalari bilan — aks holda yangi foydalanuvchi til
+        # tanlagandan keyin menyuni ko'rmay qolardi.
+        await callback.message.answer(t("start", lang), reply_markup=main_menu_keyboard(lang))
 
 
 @router.message(F.text == "/stats")
@@ -1051,6 +1062,7 @@ async def cb_check_sub(callback: CallbackQuery, bot: Bot):
     if await is_subscribed(bot, callback.from_user.id):
         await safe_edit(callback.message, t("subscribed_thanks", lang))
         await callback.answer()
+        await callback.message.answer(t("start", lang), reply_markup=main_menu_keyboard(lang))
     else:
         await callback.answer(t("not_subscribed_yet", lang), show_alert=True)
 
@@ -1277,6 +1289,23 @@ def _download_video_sync(url: str, ydl_opts: dict) -> dict:
         }
 
 
+# Qayta urinish ma'nosiz bo'lgan (doimiy) yt-dlp xatolari belgilari.
+PERMANENT_DL_ERROR_PATTERNS = (
+    "unsupported url",
+    "is not a valid url",
+    "private video",
+    "video unavailable",
+    "this video is unavailable",
+    "has been removed",
+    "does not exist",
+    "no video formats",
+    "no video could be found",
+    "there is no video in this post",
+    "http error 404",
+    "copyright",
+)
+
+
 async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 3) -> dict:
     """Vaqtinchalik tarmoq/bloklanish xatolarida bir necha marta qayta urinadi
     (kutish bilan), doimiy xatolarda (masalan noto'g'ri havola) darhol
@@ -1302,6 +1331,13 @@ async def _download_with_retry(url: str, ydl_opts: dict, attempts: int = 3) -> d
         except yt_dlp.utils.DownloadError as e:
             last_error = e
             err_text = str(e).lower()
+            # Doimiy xatolar (havola noto'g'ri, video yopiq/o'chirilgan, postda
+            # video yo'q) — qayta urinish foyda bermaydi, faqat foydalanuvchini
+            # 12 soniya kuttirib, yuklash navbatini band qiladi. Darhol
+            # yuqoriga uzatamiz (rasm postlari uchun gallery-dl ham shunda
+            # tezroq ishga tushadi).
+            if any(p in err_text for p in PERMANENT_DL_ERROR_PATTERNS):
+                raise
             if attempt < attempts:
                 log.warning(f"Yuklashda xato (urinish {attempt}/{attempts}), qayta urinilmoqda: {e}")
                 await asyncio.sleep(4 * attempt)
@@ -1982,6 +2018,7 @@ async def handle_owner_video(message: Message, bot: Bot):
     log.info("WMARK: status xabari yuborildi, yuklab olish boshlanmoqda")
     input_path = None
     current_path = None
+    temp_files = []  # finally'da o'chiriladigan barcha oraliq fayllar
     try:
         file_info = await bot.get_file(message.video.file_id)
         log.info(f"WMARK: file_info olindi, hajmi={message.video.file_size}")
@@ -1996,6 +2033,7 @@ async def handle_owner_video(message: Message, bot: Bot):
                 asyncio.to_thread(_add_watermark_sync, current_path, wm_output, logo_file, position),
                 timeout=180,
             )
+            temp_files.append(wm_output)
             current_path = wm_output
             log.info("WMARK: logo qo'yildi")
 
@@ -2005,6 +2043,7 @@ async def handle_owner_video(message: Message, bot: Bot):
                 asyncio.to_thread(_append_outro_sync, current_path, outro_output, outro_file),
                 timeout=180,
             )
+            temp_files.append(outro_output)
             current_path = outro_output
             log.info("WMARK: outro qo'shildi")
 
@@ -2016,6 +2055,7 @@ async def handle_owner_video(message: Message, bot: Bot):
             _extra["duration"] = _d
         _thumb = await asyncio.to_thread(_make_thumbnail_sync, current_path)
         if _thumb:
+            temp_files.append(_thumb)
             _extra["thumbnail"] = FSInputFile(_thumb)
         await bot.send_video(
             chat_id=message.chat.id, video=FSInputFile(current_path),
@@ -2030,11 +2070,12 @@ async def handle_owner_video(message: Message, bot: Bot):
         log.error(f"WMARK: XATO -> {type(e).__name__}: {e}")
         await safe_edit(status, "\u274C Ishlov berishda xatolik yuz berdi.")
     finally:
-        seen = set()
-        for p in (input_path, current_path):
-            if p and p not in seen and os.path.exists(p):
-                os.remove(p)
-                seen.add(p)
+        for p in {input_path, current_path, *temp_files}:
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 def _probe_video_meta_sync(path: str):
     """(width, height, duration) — aylantirish (rotation) hisobga olingan.
@@ -2418,6 +2459,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             video=FSInputFile(downloaded_path),
             caption=_build_caption(result),
             supports_streaming=True,
+            reply_markup=find_music_keyboard(lang),
             **extra,
         )
         await status.delete()
@@ -2436,7 +2478,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         )
         if any(p in err_text for p in no_video_patterns):
             try:
-                img_dir = tempfile.mkdtemp()
+                # tmp_dir ICHIDA — finally'dagi rmtree bilan albatta tozalanadi.
+                img_dir = tempfile.mkdtemp(dir=tmp_dir)
                 image_paths = await asyncio.to_thread(
                     _download_images_gallery_dl_sync, url, img_dir
                 )
@@ -2488,7 +2531,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         )
         if "instagram.com" in url and (ig_story_login or any(p in err_text for p in json_error_patterns)):
             try:
-                media_dir = tempfile.mkdtemp()
+                media_dir = tempfile.mkdtemp(dir=tmp_dir)
                 media_paths = await asyncio.to_thread(
                     _download_media_gallery_dl_sync, url, media_dir
                 )
@@ -2543,13 +2586,17 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         log.error(traceback.format_exc())
         await safe_edit(status, t("unexpected_error", lang))
     finally:
-        # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun
-        try:
-            if downloaded_path and os.path.exists(downloaded_path):
+        # Vaqtinchalik fayllarni tozalash — serverda joy to'lib qolmasligi uchun.
+        # MUHIM: avval faqat asosiy fayl o'chirilib, so'ng os.rmdir() chaqirilardi —
+        # lekin papkada muqova (_thumb.jpg), gallery-dl metadata/.json va
+        # yt-dlp qoldiqlari qolgani uchun rmdir jim muvaffaqiyatsiz bo'lib,
+        # har bir so'rovdan keyin serverda papka to'planib borardi.
+        if downloaded_path and os.path.exists(downloaded_path) and not downloaded_path.startswith(tmp_dir):
+            try:
                 os.remove(downloaded_path)
-            os.rmdir(tmp_dir)
-        except OSError:
-            pass
+            except OSError:
+                pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 async def main():
@@ -2564,6 +2611,7 @@ async def main():
     dp.include_router(clip_router)
     dp.include_router(caption_router)
     dp.include_router(router)
+    dp.include_router(music_router)  # eng oxirida — qarang: music_mode.py
 
     from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
     default_commands = [
@@ -2576,6 +2624,7 @@ async def main():
         BotCommand(command="caption", description="Videoga o'zbekcha titr qo'shish"),
         BotCommand(command="captionoff", description="Titr qo'shishni o'chirish"),
         BotCommand(command="clip", description="YouTube videodan kerakli qismni qirqib olish"),
+        BotCommand(command="music", description="Musiqa qidirish va videodagi musiqani aniqlash"),
     ]
     # Hamma foydalanuvchi uchun umumiy (standart) buyruqlar ro'yxati —
     # cookies buyruqlari BU YERDA YO'Q, shuning uchun oddiy foydalanuvchilar
