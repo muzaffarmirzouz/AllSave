@@ -25,7 +25,7 @@ Botga ulash (bot.py main()):
 Sozlamalar (Railway Variables, hammasi ixtiyoriy):
   MUSIC_MAX_SECONDS     — eng uzun qo'shiq, soniya (standart 900 = 15 daqiqa)
   MUSIC_MAX_CONCURRENT  — bir vaqtda nechta MP3 yuklash (standart 3)
-  MUSIC_MP3_KBPS        — MP3 sifati (standart 192)
+  MUSIC_MP3_KBPS        — MP3 sifati (standart 128)
 YouTube cookies/proxy/PO-token sozlamalari bot.py'dagi bilan BIR XIL.
 
 Musiqa aniqlash uchun `shazamio` kutubxonasi kerak (requirements.txt'da).
@@ -66,8 +66,13 @@ music_router = Router(name="music_mode")
 MUSIC_RESULTS = 10
 MUSIC_MAX_SECONDS = int(os.getenv("MUSIC_MAX_SECONDS", "900"))
 MUSIC_MAX_CONCURRENT = int(os.getenv("MUSIC_MAX_CONCURRENT", "3"))
-MUSIC_MP3_KBPS = (os.getenv("MUSIC_MP3_KBPS", "192").strip() or "192")
+MUSIC_MP3_KBPS = (os.getenv("MUSIC_MP3_KBPS", "128").strip() or "128")
 music_semaphore = asyncio.Semaphore(MUSIC_MAX_CONCURRENT)
+# MP3'ni Telegram'ga yuborish uchun vaqt chegarasi (soniya). aiogram'ning
+# standarti 60 soniya — Telegram audio faylni qabul qilib, ichidagi
+# ma'lumotni qayta ishlashi ba'zan undan uzoq davom etadi va so'rov
+# "Request timeout error" bilan uzilib, qo'shiq yetib bormay qolardi.
+MUSIC_UPLOAD_TIMEOUT = int(os.getenv("MUSIC_UPLOAD_TIMEOUT", "300"))
 
 # Musiqa aniqlash
 REC_MAX_MB = 20                 # Telegram botga 20 MB dan kattasini bermaydi
@@ -655,7 +660,7 @@ async def cb_select(callback: CallbackQuery, bot: Bot):
     cached = await asyncio.to_thread(_cache_get, item["id"])
     if cached:
         try:
-            await bot.send_audio(chat_id, audio=cached, caption=caption)
+            await bot.send_audio(chat_id, audio=cached, caption=caption, request_timeout=60)
             return
         except Exception as e:
             logger.info(f"music: keshdagi file_id ishlamadi, qayta yuklanadi: {e}")
@@ -673,7 +678,9 @@ async def cb_select(callback: CallbackQuery, bot: Bot):
                 await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VOICE)
             except Exception:
                 pass
+            t0 = time.monotonic()
             res = await asyncio.to_thread(_download_mp3_sync, item["id"], tmp_dir)
+            t_dl = time.monotonic() - t0
 
         size_mb = os.path.getsize(res["path"]) / (1024 * 1024)
         if size_mb > SEND_LIMIT_MB:
@@ -688,7 +695,19 @@ async def cb_select(callback: CallbackQuery, bot: Bot):
         if res.get("thumb"):
             kwargs["thumbnail"] = FSInputFile(res["thumb"])
         fname = re.sub(r'[\\/:*?"<>|]+', "", f"{res.get('artist') or ''} - {res['title']}".strip(" -"))[:60] or "audio"
-        sent = await bot.send_audio(chat_id, audio=FSInputFile(res["path"], filename=f"{fname}.mp3"), **kwargs)
+        try:
+            await bot.send_chat_action(chat_id, ChatAction.UPLOAD_VOICE)
+        except Exception:
+            pass
+        t1 = time.monotonic()
+        sent = await bot.send_audio(
+            chat_id, audio=FSInputFile(res["path"], filename=f"{fname}.mp3"),
+            request_timeout=MUSIC_UPLOAD_TIMEOUT, **kwargs,
+        )
+        logger.info(
+            f"music: {item['id']} yuborildi — {size_mb:.1f} MB, "
+            f"yuklash {t_dl:.1f}s, Telegram'ga yuborish {time.monotonic() - t1:.1f}s"
+        )
         if sent and sent.audio:
             await asyncio.to_thread(_cache_put, item["id"], sent.audio.file_id)
         try:
@@ -696,7 +715,7 @@ async def cb_select(callback: CallbackQuery, bot: Bot):
         except Exception:
             pass
     except Exception as e:
-        logger.warning(f"music: yuklashda xato ({item['id']}): {e}")
+        logger.warning(f"music: yuklash/yuborishda xato ({item['id']}): {type(e).__name__}: {e}")
         await _edit(status, mt("dl_error", lang))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
