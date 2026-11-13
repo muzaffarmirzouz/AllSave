@@ -9,3 +9,5 @@ deno
 numpy
 opencv-python-headless>=4.8,<5
 # force rebuild
+shazamio
+audioop-lts; python_version >= "3.13"

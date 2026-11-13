@@ -60,6 +60,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, FSInputFile
 
+from bot_ref import bot_mod
+
 logger = logging.getLogger(__name__)
 
 caption_router = Router(name="caption_mode")
@@ -67,7 +69,13 @@ caption_router = Router(name="caption_mode")
 # ---------------------------------------------------------------- sozlamalar
 
 MAX_VIDEO_SECONDS = int(os.getenv("CAPTION_MAX_SECONDS", "120"))  # 2 daqiqa
-MAX_FILE_MB = 200
+# Telegram oddiy Bot API botga 20 MB dan katta faylni YUKLAB BERMAYDI —
+# avval bu yerda 200 yozilgan edi, shuning uchun 20-200 MB oralig'idagi
+# video bot.get_file() da xato berib, bot "yuklab olinmoqda..." holatida
+# javobsiz qotib qolardi.
+MAX_FILE_MB = 20
+# Tayyor videoni Telegram'ga yuborish chegarasi.
+MAX_SEND_MB = 50
 
 # Titr shrifti endi apt orqali TIZIMGA o'rnatilgan shriftga EMAS, balki
 # to'g'ridan-to'g'ri LOYIHA ICHIDAGI fayl(lar)ga tayanadi — "fonts/" papkasi
@@ -202,17 +210,15 @@ def _caption_enabled(message: Message) -> bool:
     bo'lmasligi uchun (bot.py caption_router'ni import qilganda, bu modul
     hali to'liq yuklanib ulgurmagan bo'ladi)."""
     try:
-        from bot import get_user_caption_enabled
-        return get_user_caption_enabled(message.from_user.id)
-    except ImportError:
+        return bot_mod().get_user_caption_enabled(message.from_user.id)
+    except Exception:
         return False
 
 
 def _set_caption_enabled(user_id: int, enabled: bool) -> None:
     try:
-        from bot import set_user_caption_enabled
-        set_user_caption_enabled(user_id, enabled)
-    except ImportError:
+        bot_mod().set_user_caption_enabled(user_id, enabled)
+    except Exception:
         pass
 
 
@@ -220,6 +226,8 @@ def _set_caption_enabled(user_id: int, enabled: bool) -> None:
 
 CAPTION_TEXTS = {
     "uz": {
+        "unexpected": "❌ Xatolik yuz berdi, birozdan keyin qayta urinib ko'ring.",
+        "result_too_large": "❌ Tayyor video Telegram chegarasidan ({max} MB) katta chiqdi — qisqaroq video yuboring.",
         "mode_on": (
             "🎬 <b>Titr qo'shish YOQILDI.</b>\n\n"
             "Endi menga yuboradigan HAR BIR video fayl yoki video havola "
@@ -249,6 +257,8 @@ CAPTION_TEXTS = {
         "done_caption": "✅ Tayyor! Bu videoga {bot} orqali titr yozib berildi.\n\nTitr qo'shish hali ham YOQILGAN — keyingi videolarga ham avtomatik qo'shiladi. O'chirish uchun /captionoff.",
     },
     "ru": {
+        "unexpected": "❌ Произошла ошибка, попробуйте ещё раз чуть позже.",
+        "result_too_large": "❌ Готовое видео больше лимита Telegram ({max} МБ) — отправьте видео покороче.",
         "mode_on": (
             "🎬 <b>Добавление субтитров ВКЛЮЧЕНО.</b>\n\n"
             "Теперь к КАЖДОМУ видеофайлу или ссылке на видео (Instagram, "
@@ -278,6 +288,8 @@ CAPTION_TEXTS = {
         "done_caption": "✅ Готово! Субтитры на это видео добавлены через {bot}.\n\nДобавление субтитров всё ещё ВКЛЮЧЕНО — к следующим видео тоже добавится автоматически. Чтобы выключить — /captionoff.",
     },
     "en": {
+        "unexpected": "❌ Something went wrong, please try again in a moment.",
+        "result_too_large": "❌ The finished video is larger than Telegram's {max} MB limit — please send a shorter one.",
         "mode_on": (
             "🎬 <b>Subtitles ENABLED.</b>\n\n"
             "Now EVERY video file or video link (Instagram, TikTok, etc.) you "
@@ -309,18 +321,16 @@ def get_lang(user_id: int) -> str:
     """bot.py'da saqlangan foydalanuvchi tilini o'qiydi (uz/ru/en).
     Import funksiya ICHIDA — circular import bo'lmasligi uchun."""
     try:
-        from bot import get_user_lang
-        return get_user_lang(user_id) or "uz"
-    except ImportError:
+        return bot_mod().get_user_lang(user_id) or "uz"
+    except Exception:
         return "uz"
 
 
 def get_bot_tag() -> str:
     """bot.py'dagi BOT_USERNAME_TAG'ni qaytaradi (masalan '@AllSaveUz_Bot')."""
     try:
-        from bot import BOT_USERNAME_TAG
-        return BOT_USERNAME_TAG
-    except ImportError:
+        return bot_mod().BOT_USERNAME_TAG
+    except Exception:
         return "@AllSaveUz_Bot"
 
 
@@ -387,6 +397,46 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
 # ---------------------------------------------------------------- video kelsa
 
+async def _edit(msg: Message, text: str) -> None:
+    """Status xabarini xavfsiz yangilaydi ("message is not modified" va
+    o'chirilgan xabar xatolari asosiy jarayonni to'xtatmasligi uchun)."""
+    try:
+        await msg.edit_text(text)
+    except Exception as e:
+        if "message is not modified" not in str(e):
+            logger.warning(f"/caption status xabarini yangilab bo'lmadi: {e}")
+
+
+def _is_uploading_logo_or_outro(user_id: int) -> bool:
+    """Foydalanuvchi hozir yangi LOGO yoki OUTRO yuklayotgan bo'lsa True.
+    MUHIM: caption_router asosiy router'dan OLDIN ulangani uchun, Titr
+    yoqilgan foydalanuvchi outro (video) yoki logo (.webm hujjat)
+    yuborganda, avval bu yerdagi handler uni "titr yoziladigan video" deb
+    ushlab olardi — outro/logo esa SAQLANMAY qolardi. Endi bunday
+    holatda xabar asosiy bot.py handleriga o'tkaziladi."""
+    try:
+        B = bot_mod()
+        return user_id in B._awaiting_outro_from or user_id in B._awaiting_logo_from
+    except Exception:
+        return False
+
+
+async def _ensure_subscribed(bot: Bot, message: Message) -> bool:
+    """Majburiy obuna + foydalanuvchini ro'yxatga olish — asosiy
+    yuklab olish (bot.py handle_link) bilan bir xil qoida."""
+    try:
+        B = bot_mod()
+        B.track_user(message.from_user.id, message.from_user.username)
+        if await B.is_subscribed(bot, message.from_user.id):
+            return True
+        lang = get_lang(message.from_user.id)
+        await message.answer(B.t("subscribe", lang), reply_markup=B.subscribe_keyboard(lang))
+        return False
+    except Exception as e:
+        logger.warning(f"/caption obuna tekshiruvida xato (o'tkazib yuborildi): {e}")
+        return True
+
+
 def _is_video_document(message: Message) -> bool:
     """Hujjat (document) sifatida yuborilgan faylning aynan VIDEO
     ekanligini (mime_type orqali) tekshiradi. MUHIM: bu tekshiruv
@@ -398,9 +448,15 @@ def _is_video_document(message: Message) -> bool:
     return bool(doc and (doc.mime_type or "").startswith("video/"))
 
 
-@caption_router.message(lambda m: _caption_enabled(m) and bool(m.video or _is_video_document(m)))
+@caption_router.message(
+    lambda m: bool(m.video or _is_video_document(m))
+    and not _is_uploading_logo_or_outro(m.from_user.id)
+    and _caption_enabled(m)
+)
 async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
     lang = get_lang(message.from_user.id)
+    if not await _ensure_subscribed(bot, message):
+        return
     media = message.video or message.document
     if media.file_size and media.file_size > MAX_FILE_MB * 1024 * 1024:
         await message.answer(ct("too_large", lang, max=MAX_FILE_MB))
@@ -408,12 +464,18 @@ async def handle_video_input(message: Message, bot: Bot, state: FSMContext):
 
     status = await message.answer(ct("downloading", lang))
 
-    with tempfile.TemporaryDirectory() as tmp_str:
-        tmp = Path(tmp_str)
-        src_path = tmp / "input.mp4"
-        tg_file = await bot.get_file(media.file_id)
-        await bot.download_file(tg_file.file_path, destination=src_path)
-        await process_and_reply(message, status, src_path, tmp, lang)
+    try:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            src_path = tmp / "input.mp4"
+            tg_file = await bot.get_file(media.file_id)
+            await bot.download_file(tg_file.file_path, destination=src_path)
+            await process_and_reply(message, status, src_path, tmp, lang)
+    except Exception as e:
+        # Avval bu yerda xato ushlanmasdi — bot "yuklab olinmoqda..."
+        # holatida javobsiz qotib qolardi.
+        logger.exception(f"/caption (video fayl) kutilmagan xato: {e}")
+        await _edit(status, ct("unexpected", lang))
 
     # Titr rejimi DOIMIY sozlama — hech narsa o'chirilmaydi, keyingi
     # video/link ham avtomatik titr bilan qaytadi. O'chirish uchun
@@ -432,20 +494,26 @@ CAPTION_URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
 @caption_router.message(F.text.regexp(r"(?i)https?://\S+"), lambda m: _caption_enabled(m))
-async def handle_link_input(message: Message, state: FSMContext):
+async def handle_link_input(message: Message, bot: Bot, state: FSMContext):
     lang = get_lang(message.from_user.id)
+    if not await _ensure_subscribed(bot, message):
+        return
     match = CAPTION_URL_IN_TEXT_RE.search(message.text)
     url = match.group(0) if match else message.text.strip()
     status = await message.answer(ct("downloading", lang))
 
-    with tempfile.TemporaryDirectory() as tmp_str:
-        tmp = Path(tmp_str)
-        src_path = tmp / "input.mp4"
-        ok = await download_video(url, str(src_path))
-        if not ok:
-            await status.edit_text(ct("download_failed", lang))
-            return
-        await process_and_reply(message, status, src_path, tmp, lang)
+    try:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            src_path = tmp / "input.mp4"
+            ok = await download_video(url, str(src_path))
+            if not ok:
+                await _edit(status, ct("download_failed", lang))
+                return
+            await process_and_reply(message, status, src_path, tmp, lang)
+    except Exception as e:
+        logger.exception(f"/caption (havola) kutilmagan xato: {e}")
+        await _edit(status, ct("unexpected", lang))
 
     # Titr rejimi DOIMIY sozlama — muvaffaqiyatli bo'lsa ham, xato bo'lsa
     # ham hech narsa o'chirilmaydi, foydalanuvchi qayta urinib ko'rishi
@@ -486,13 +554,15 @@ async def download_video(url: str, output_path: str) -> bool:
     }
 
     try:
-        from bot import IG_COOKIES_FILE, YT_COOKIES_FILE
-        if IG_COOKIES_FILE and "instagram.com" in url:
-            ydl_opts["cookiefile"] = IG_COOKIES_FILE
-        if YT_COOKIES_FILE and ("youtube.com" in url or "youtu.be" in url):
-            ydl_opts["cookiefile"] = YT_COOKIES_FILE
-    except ImportError:
-        pass  # bot.py hali yuklanmagan bo'lsa (masalan test muhitida) — davom etamiz
+        _B = bot_mod()
+        ig_cookies = getattr(_B, "IG_COOKIES_FILE", None)
+        yt_cookies = getattr(_B, "YT_COOKIES_FILE", None)
+        if ig_cookies and "instagram.com" in url:
+            ydl_opts["cookiefile"] = ig_cookies
+        if yt_cookies and ("youtube.com" in url or "youtu.be" in url):
+            ydl_opts["cookiefile"] = yt_cookies
+    except Exception:
+        pass  # bot.py topilmasa (masalan test muhitida) — davom etamiz
 
     # PROXY_URL Railway environment variable orqali sozlansa — barcha
     # so'rovlar shu proxy orqali o'tadi (masalan Instagram cookie sessiyasi
@@ -529,9 +599,8 @@ async def download_video(url: str, output_path: str) -> bool:
     # yuklab olish bitta hisoblagichni baham ko'radi.
     if "instagram.com" in url:
         try:
-            from bot import _throttle_instagram
-            await _throttle_instagram()
-        except ImportError:
+            await bot_mod()._throttle_instagram()
+        except Exception:
             pass
 
     json_error_patterns = ("failed to parse json", "jsondecodeerror", "expecting value")
@@ -594,7 +663,7 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
 
     duration = await get_duration(src_path)
     if duration and duration > MAX_VIDEO_SECONDS:
-        await status.edit_text(ct("too_long", lang, sec=int(duration), max=MAX_VIDEO_SECONDS))
+        await _edit(status, ct("too_long", lang, sec=int(duration), max=MAX_VIDEO_SECONDS))
         return
 
     # --- Bu yerdan boshlab og'ir qism (ASR + ffmpeg kuydirish + yuborish) ---
@@ -607,7 +676,7 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
         _active_captions += 1
     try:
         if will_wait:
-            await status.edit_text(ct("queued", lang))
+            await _edit(status, ct("queued", lang))
 
         async with caption_semaphore:
             audio_path = tmp / "audio.wav"
@@ -618,10 +687,10 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
                 ])
             except RuntimeError as e:
                 logger.error(f"ffmpeg audio ajratish xatosi: {e}")
-                await status.edit_text(ct("cant_read", lang))
+                await _edit(status, ct("cant_read", lang))
                 return
 
-            await status.edit_text(ct("transcribing", lang))
+            await _edit(status, ct("transcribing", lang))
             _asr_job_started()
             try:
                 pipe = await asyncio.to_thread(get_asr_pipeline)
@@ -637,14 +706,14 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
             words = result.get("chunks") or []
 
             if not words:
-                await status.edit_text(ct("no_speech", lang))
+                await _edit(status, ct("no_speech", lang))
                 return
 
             srt_path = tmp / "subs.ass"
             video_width, video_height = await get_video_dimensions(src_path)
             box_specs = write_ass(words, srt_path, video_width, video_height)
 
-            await status.edit_text(ct("burning", lang))
+            await _edit(status, ct("burning", lang))
             out_path = tmp / "output.mp4"
 
             # Original faylning taxminiy bitrate'ini hisoblaymiz, shunda chiqish
@@ -666,10 +735,15 @@ async def process_and_reply(message: Message, status: Message, src_path: Path, t
                 await burn_subtitles(src_path, srt_path, out_path, target_kbps, box_specs, video_width, video_height)
             except RuntimeError as e:
                 logger.error(f"ffmpeg subtitr kuydirish xatosi: {e}")
-                await status.edit_text(ct("burn_failed", lang))
+                await _edit(status, ct("burn_failed", lang))
                 return
 
-            await status.edit_text(ct("uploading", lang))
+            out_mb = out_path.stat().st_size / (1024 * 1024)
+            if out_mb > MAX_SEND_MB:
+                await _edit(status, ct("result_too_large", lang, max=MAX_SEND_MB))
+                return
+
+            await _edit(status, ct("uploading", lang))
             bot_tag = get_bot_tag()
             await message.answer_video(FSInputFile(out_path), caption=ct("done_caption", lang, bot=bot_tag))
             await status.delete()
