@@ -81,6 +81,13 @@ REC_MAX_CONCURRENT = int(os.getenv("MUSIC_REC_MAX_CONCURRENT", "3"))
 rec_semaphore = asyncio.Semaphore(REC_MAX_CONCURRENT)
 
 SEND_LIMIT_MB = 50
+
+# Har bir MP3 ichiga (ID3 muqova) va Telegram'dagi kichik rasmga botning
+# o'z reklama rasmi qo'yiladi. Rasmni almashtirish uchun shunchaki
+# assets/music_cover.jpg faylini yangisiga almashtiring.
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+MUSIC_COVER_FILE = os.path.join(_ASSETS_DIR, "music_cover.jpg")
+_brand_thumb_path: Optional[str] = None
 QUERY_MIN_LEN = 2
 QUERY_MAX_LEN = 100
 
@@ -116,7 +123,10 @@ MUSIC_TEXTS = {
         "too_long": "❌ Bu juda uzun ({dur}). {max} gacha bo'lgan qo'shiqlarni yuklayman.",
         "dl_error": "❌ Qo'shiqni yuklab bo'lmadi. Boshqa natijani tanlab ko'ring.",
         "too_big": "❌ Fayl Telegram chegarasidan ({max} MB) katta chiqdi.",
-        "audio_caption": "🎵 {bot} orqali yuklab olindi",
+        "audio_caption": (
+            "🎵 Ushbu qo'shiq {bot} orqali yuklab olindi\n\n"
+            "🔥 N1 botimizga obuna bo'lishni unutmang — siz kutmagan funksiyalar mavjud!"
+        ),
         "recognizing": "🎧 Musiqa aniqlanmoqda...",
         "rec_found": "🎧 Topildi: {artist} — {title}",
         "rec_not_found": "😕 Bu videoda/audioda musiqa aniqlanmadi. Qo'shiq aniq eshitiladigan qismini yuboring.",
@@ -146,7 +156,10 @@ MUSIC_TEXTS = {
         "too_long": "❌ Слишком длинный трек ({dur}). Загружаю треки до {max}.",
         "dl_error": "❌ Не удалось скачать трек. Попробуйте другой результат.",
         "too_big": "❌ Файл больше лимита Telegram ({max} МБ).",
-        "audio_caption": "🎵 Скачано через {bot}",
+        "audio_caption": (
+            "🎵 Эта песня скачана через {bot}\n\n"
+            "🔥 Не забудьте подписаться на наш бот №1 — здесь есть функции, которых вы не ожидаете!"
+        ),
         "recognizing": "🎧 Распознаю музыку...",
         "rec_found": "🎧 Найдено: {artist} — {title}",
         "rec_not_found": "😕 Музыку распознать не удалось. Отправьте фрагмент, где песня хорошо слышна.",
@@ -176,7 +189,10 @@ MUSIC_TEXTS = {
         "too_long": "❌ That's too long ({dur}). I download tracks up to {max}.",
         "dl_error": "❌ Couldn't download that track. Try another result.",
         "too_big": "❌ The file is larger than Telegram's {max} MB limit.",
-        "audio_caption": "🎵 Downloaded via {bot}",
+        "audio_caption": (
+            "🎵 This song was downloaded via {bot}\n\n"
+            "🔥 Don't forget to subscribe to our N1 bot — it has features you won't expect!"
+        ),
         "recognizing": "🎧 Recognizing the music...",
         "rec_found": "🎧 Found: {artist} — {title}",
         "rec_not_found": "😕 Couldn't recognize any music. Send a part where the song is clearly audible.",
@@ -248,7 +264,7 @@ async def _ensure_subscribed(bot: Bot, message: Message, user) -> bool:
 def _cache_conn():
     conn = sqlite3.connect(bot_mod().DB_PATH)
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS music_cache ("
+        "CREATE TABLE IF NOT EXISTS music_cache_v2 ("
         " video_id TEXT PRIMARY KEY, file_id TEXT NOT NULL, created TEXT)"
     )
     return conn
@@ -257,7 +273,7 @@ def _cache_conn():
 def _cache_get(video_id: str) -> Optional[str]:
     try:
         conn = _cache_conn()
-        row = conn.execute("SELECT file_id FROM music_cache WHERE video_id = ?", (video_id,)).fetchone()
+        row = conn.execute("SELECT file_id FROM music_cache_v2 WHERE video_id = ?", (video_id,)).fetchone()
         conn.close()
         return row[0] if row else None
     except Exception as e:
@@ -269,7 +285,7 @@ def _cache_put(video_id: str, file_id: str) -> None:
     try:
         conn = _cache_conn()
         conn.execute(
-            "INSERT OR REPLACE INTO music_cache (video_id, file_id, created) VALUES (?, ?, datetime('now'))",
+            "INSERT OR REPLACE INTO music_cache_v2 (video_id, file_id, created) VALUES (?, ?, datetime('now'))",
             (video_id, file_id),
         )
         conn.commit()
@@ -281,7 +297,7 @@ def _cache_put(video_id: str, file_id: str) -> None:
 def _cache_del(video_id: str) -> None:
     try:
         conn = _cache_conn()
-        conn.execute("DELETE FROM music_cache WHERE video_id = ?", (video_id,))
+        conn.execute("DELETE FROM music_cache_v2 WHERE video_id = ?", (video_id,))
         conn.commit()
         conn.close()
     except Exception:
@@ -362,22 +378,61 @@ def _split_artist_title(raw_title: str, uploader: str) -> tuple:
     return (artist[:64] or None), title[:64]
 
 
-def _make_audio_thumb_sync(tmp_dir: str) -> Optional[str]:
-    """yt-dlp yozgan muqovani Telegram talabiga (JPEG, <=320px, <200KB) moslaydi."""
-    srcs = [p for p in glob.glob(os.path.join(tmp_dir, "*"))
-            if p.lower().endswith((".webp", ".jpg", ".jpeg", ".png"))]
-    if not srcs:
+def _brand_thumb() -> Optional[str]:
+    """Telegram audio kichik rasmi (JPEG, <=320px, <200KB) — reklama
+    rasmidan BIR MARTA yasaladi va qayta ishlatiladi."""
+    global _brand_thumb_path
+    if _brand_thumb_path and os.path.exists(_brand_thumb_path):
+        return _brand_thumb_path
+    if not os.path.exists(MUSIC_COVER_FILE):
         return None
-    out = os.path.join(tmp_dir, "cover_tg.jpg")
-    for q in ("4", "8", "14"):
+    out = os.path.join(tempfile.gettempdir(), "allsave_music_thumb.jpg")
+    for q in ("3", "6", "10"):
         r = subprocess.run(
-            ["ffmpeg", "-y", "-i", srcs[0], "-frames:v", "1",
+            ["ffmpeg", "-y", "-i", MUSIC_COVER_FILE, "-frames:v", "1",
              "-vf", "scale=320:320:force_original_aspect_ratio=decrease", "-q:v", q, out],
             capture_output=True, timeout=30,
         )
         if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) < 190_000:
+            _brand_thumb_path = out
             return out
     return None
+
+
+def _embed_cover_sync(mp3_path: str, title: str, artist: Optional[str]) -> str:
+    """MP3 ichiga (ID3v2.3) reklama rasmini muqova qilib, nom/ijrochi va
+    bot haqida izohni yozadi. Qayta kodlamaydi (-c copy) — tez. Xato
+    bo'lsa ASL faylni qaytaradi (qo'shiq baribir yuboriladi)."""
+    if not os.path.exists(MUSIC_COVER_FILE):
+        return mp3_path
+    try:
+        bot_tag = bot_mod().BOT_USERNAME_TAG
+    except Exception:
+        bot_tag = "@AllSaveUz_Bot"
+    out = mp3_path.rsplit(".", 1)[0] + "_cover.mp3"
+    cmd = [
+        "ffmpeg", "-y", "-i", mp3_path, "-i", MUSIC_COVER_FILE,
+        "-map", "0:a", "-map", "1:v", "-c", "copy",
+        "-map_metadata", "-1", "-id3v2_version", "3",
+        "-metadata", f"title={title}",
+        "-metadata", f"comment=Ushbu qo'shiq {bot_tag} orqali yuklab olindi",
+        "-metadata", f"album={bot_tag}",
+        "-metadata:s:v", "title=Album cover",
+        "-metadata:s:v", "comment=Cover (front)",
+        "-disposition:v", "attached_pic",
+    ]
+    if artist:
+        cmd += ["-metadata", f"artist={artist}"]
+    cmd.append(out)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=60)
+        if r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 0:
+            os.remove(mp3_path)
+            return out
+        logger.warning(f"music: muqova qo'yib bo'lmadi: {r.stderr[-300:]!r}")
+    except Exception as e:
+        logger.warning(f"music: muqova qo'yishda xato: {e}")
+    return mp3_path
 
 
 def _download_mp3_sync(video_id: str, tmp_dir: str) -> dict:
@@ -385,7 +440,6 @@ def _download_mp3_sync(video_id: str, tmp_dir: str) -> dict:
     opts.update({
         "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
         "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "writethumbnail": True,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -399,12 +453,13 @@ def _download_mp3_sync(video_id: str, tmp_dir: str) -> dict:
     if not mp3s:
         raise RuntimeError("mp3 fayl hosil bo'lmadi (video juda uzun yoki jonli efir bo'lishi mumkin)")
     artist, title = _split_artist_title(info.get("title") or "", info.get("channel") or info.get("uploader") or "")
+    path = _embed_cover_sync(mp3s[0], title, artist)
     return {
-        "path": mp3s[0],
+        "path": path,
         "title": title,
         "artist": artist,
         "duration": int(info.get("duration") or 0) or None,
-        "thumb": _make_audio_thumb_sync(tmp_dir),
+        "thumb": _brand_thumb(),
     }
 
 
