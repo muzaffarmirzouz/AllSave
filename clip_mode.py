@@ -303,6 +303,11 @@ def fmt_time(sec: int) -> str:
 
 # ------------------------------------------------------ yuklab olish va qirqish
 
+# yt-dlp format filtri: protokol "http..." bilan boshlanadi, lekin DASH
+# bo'laklari ("http_dash_segments") EMAS.
+_NO_DASH = "[protocol^=http][protocol!*=dash]"
+
+
 def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False, source_height: Optional[int] = None) -> dict:
     """bot.py'dagi YouTube sozlamalari (cookies, proxy, JS runtime, PO token)
     bilan BIR XIL, faqat butun video o'rniga `download_ranges` bilan."""
@@ -312,7 +317,15 @@ def _build_ydl_opts(tmp_dir: str, ranges_fn=None, fallback: bool = False, source
         # Hajm filtri ATAYLAB yo'q: butun video hajmi 50 MB'dan katta bo'ladi,
         # lekin biz faqat kichik bo'lakni olamiz. Hajm qirqilgandan KEYIN
         # tekshiriladi (kerak bo'lsa moslashtiriladi).
+        # Tezkor usulda AVVAL oddiy https formatlar tanlanadi: ffmpeg ularni
+        # kerakli soniyadan to'g'ridan-to'g'ri ocha oladi. YouTube ba'zan
+        # videoni `http_dash_segments` (mayda bo'laklar) ko'rinishida beradi —
+        # ffmpeg bunday oqimga "sakray" olmaydi ("Invalid data found when
+        # processing input") va bot sekin zaxira usulga o'tib ketardi. Faqat
+        # https formatlar umuman bo'lmasagina eski tanlovga qaytiladi.
         "format": (
+            f"bestvideo[vcodec^=avc1]{_NO_DASH}+bestaudio[acodec^=mp4a]{_NO_DASH}/"
+            f"bestvideo{_NO_DASH}+bestaudio{_NO_DASH}/"
             "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/"
             "bestvideo[vcodec^=avc1]+bestaudio/"
             "bestvideo+bestaudio/best"
@@ -593,9 +606,14 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
     2) U ffmpeg/HTTP xatosi bilan yiqilsa — zaxira usul (past sifatli to'liq
        yuklash + lokal qirqish). Tezkor usul yiqilganini bir muddat eslab
        qolamiz va keyingi so'rovlarda darhol zaxiraga o'tamiz."""
-    global _section_skip_until
+    global _section_skip_until, _last_diag
     permanent_words = ("private", "unavailable", "removed", "not available", "sign in", "not a bot")
 
+    # Tezkor usul diagnostikasi endi DARHOL egaga yuborilmaydi — zaxira usul
+    # klipni baribir yetkazib bersa, bu shunchaki ortiqcha xabar edi. U faqat
+    # zaxira usul HAM yiqilganda (yoki zaxira o'chiq bo'lsa) yuboriladi.
+    fast_diag = ""
+    _last_diag = ""  # oldingi so'rovdan qolgan eski diagnostika yuborilmasin
     if not CLIP_FALLBACK or time.monotonic() >= _section_skip_until:
         try:
             return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, False, source_height)
@@ -604,9 +622,10 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
         except yt_dlp.utils.DownloadError as e:
             err = str(e).lower()
             logger.warning(f"/clip tezkor usul xatosi: {e}")
-            if on_diag is not None and _last_diag:
-                await on_diag(_last_diag)
+            fast_diag = _last_diag
             if not CLIP_FALLBACK or any(p in err for p in permanent_words):
+                if on_diag is not None and fast_diag:
+                    await on_diag(fast_diag)
                 raise
             if "ffmpeg" in err:
                 _section_skip_until = time.monotonic() + CLIP_SECTION_RETRY_SECONDS
@@ -619,8 +638,10 @@ async def _download_with_retry(url: str, start: int, end: int, tmp_dir: str, on_
     await asyncio.to_thread(_clean_dir, tmp_dir)
     try:
         return await asyncio.to_thread(_clip_download_sync, url, start, end, tmp_dir, True, source_height)
-    except yt_dlp.utils.DownloadError as e:
+    except (yt_dlp.utils.DownloadError, ClipError) as e:
         logger.warning(f"/clip zaxira usul ham xato berdi: {e}")
+        if on_diag is not None and fast_diag:
+            await on_diag(fast_diag)
         raise
 
 
