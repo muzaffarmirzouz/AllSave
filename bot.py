@@ -2404,33 +2404,37 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         async with download_semaphore:
             if was_queued:
                 await safe_edit(status, t("downloading", lang))
-            # 1) Instagram — AVVAL cookie'siz API (APIFY_TOKEN bo'lsa). U xato
-            #    bersa, jim holda eskicha yt-dlp -> gallery-dl yo'liga o'tamiz.
-            ig_caption_task = None
-            if "instagram.com" in url and ig_api.enabled():
-                # Izoh (caption) — API bermaydi, shuning uchun embed sahifadan
-                # PARALLEL olinadi (yuklashni sekinlashtirmaydi).
+            # Instagram tartibi:
+            #   1) ESKI usul — yt-dlp (cookie bilan): post IZOHI ham shu yerdan keladi;
+            #   2) u yuklay olmasa — cookie'siz Apify API (APIFY_TOKEN bo'lsa);
+            #   3) API ham ishlamasa — pastdagi gallery-dl zaxiralari.
+            # API ulangan bo'lsa yt-dlp'ning kutishli 3 marta urinishi o'rniga
+            # bir urinish + tezkor variantlar ishlatiladi (foydalanuvchi uzoq
+            # kutmasligi uchun) — baribir keyin API bor.
+            is_ig = "instagram.com" in url
+            use_api = is_ig and ig_api.enabled()
+            if is_ig:
+                await _throttle_instagram()
+            try:
+                result = await _download_with_retry(url, ydl_opts, attempts=1 if use_api else 3)
+            except yt_dlp.utils.DownloadError as old_err:
+                if not use_api:
+                    raise
+                log.warning(f"Eski usul (yt-dlp) ishlamadi, IG API'ga o'tiladi: {old_err}")
+                # API izoh bermaydi — embed sahifadan PARALLEL urinib ko'ramiz.
                 ig_caption_task = asyncio.create_task(ig_api.fetch_caption(url, PROXY_URL))
                 try:
                     api_paths = await ig_api.download_instagram(url, tmp_dir, MAX_TELEGRAM_MB)
-                except Exception as e:
-                    log.warning(f"IG API ishlamadi, yt-dlp'ga o'tiladi: {e}")
-                    api_paths = None
-                    await ig_api.report_api_error(e)
-            if api_paths:
-                ig_izoh = ""
-                if ig_caption_task is not None:
-                    try:
-                        ig_izoh = await asyncio.wait_for(ig_caption_task, timeout=15)
-                    except Exception:
-                        ig_izoh = ""
-                result = {"path": api_paths[0], "description": ig_izoh}
-            else:
-                if ig_caption_task is not None:
+                except Exception as api_err:
                     ig_caption_task.cancel()
-                if "instagram.com" in url:
-                    await _throttle_instagram()
-                result = await _download_with_retry(url, ydl_opts)
+                    log.warning(f"IG API ham ishlamadi: {api_err}")
+                    await ig_api.report_api_error(api_err)
+                    raise old_err  # -> pastdagi gallery-dl zaxiralari
+                try:
+                    ig_izoh = await asyncio.wait_for(ig_caption_task, timeout=15)
+                except Exception:
+                    ig_izoh = ""
+                result = {"path": api_paths[0], "description": ig_izoh}
             downloaded_path = result.get("path")
 
         # Karusel (bir nechta rasm/video) — albom qilib yuboramiz.
