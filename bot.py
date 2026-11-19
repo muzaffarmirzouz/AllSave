@@ -50,6 +50,10 @@ from clip_mode import clip_router
 # qilinadi — u faqat boshqa bo'limlar ushlamagan matn/video/audio'ni oladi.
 from music_mode import music_router, find_music_keyboard
 
+# Instagram'ni cookie'siz yuklash — tashqi API (Railway: APIFY_TOKEN).
+# Token bo'lmasa o'chiq turadi; xato bersa bot eskicha yt-dlp yo'liga qaytadi.
+import ig_api
+
 
 class WatermarkStates(StatesGroup):
     # "Videoga Logo qo'yish" tugmasi bosilgandan keyin, FAQAT keyingi bitta
@@ -1406,6 +1410,30 @@ IMAGE_CAPTION = (
 )
 
 
+async def _send_media_album(bot: Bot, chat_id: int, paths: list, caption: str) -> None:
+    """Bir nechta rasm/videoni Telegram albomi qilib yuboradi (10 tadan bo'lib,
+    jami 30 tagacha). Izoh birinchi faylga qo'yiladi."""
+    video_exts = (".mp4", ".mov", ".webm")
+    for i in range(0, min(len(paths), 30), 10):
+        chunk = paths[i:i + 10]
+        cap = caption if i == 0 else None
+        if len(chunk) == 1:
+            p = chunk[0]
+            if p.lower().endswith(video_exts):
+                await bot.send_video(chat_id=chat_id, video=FSInputFile(p), caption=cap, supports_streaming=True)
+            else:
+                await bot.send_photo(chat_id=chat_id, photo=FSInputFile(p), caption=cap)
+            continue
+        media = [
+            InputMediaVideo(media=FSInputFile(p), supports_streaming=True) if p.lower().endswith(video_exts)
+            else InputMediaPhoto(media=FSInputFile(p))
+            for p in chunk
+        ]
+        if cap:
+            media[0].caption = cap
+        await bot.send_media_group(chat_id=chat_id, media=media)
+
+
 def _build_image_caption(izoh: str = "") -> str:
     """Rasm bilan birga yuboriladigan izohni tayyorlaydi: asl post izohi
     (agar topilgan bo'lsa) + botning o'z reklamasi. Izoh topilmasa,
@@ -2358,13 +2386,35 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
         if was_queued:
             await safe_edit(status, t("queued", lang))
 
+        api_paths = None
         async with download_semaphore:
             if was_queued:
                 await safe_edit(status, t("downloading", lang))
-            if "instagram.com" in url:
-                await _throttle_instagram()
-            result = await _download_with_retry(url, ydl_opts)
+            # 1) Instagram — AVVAL cookie'siz API (APIFY_TOKEN bo'lsa). U xato
+            #    bersa, jim holda eskicha yt-dlp -> gallery-dl yo'liga o'tamiz.
+            if "instagram.com" in url and ig_api.enabled():
+                try:
+                    api_paths = await ig_api.download_instagram(url, tmp_dir, MAX_TELEGRAM_MB)
+                except Exception as e:
+                    log.warning(f"IG API ishlamadi, yt-dlp'ga o'tiladi: {e}")
+                    api_paths = None
+            if api_paths:
+                result = {"path": api_paths[0]}
+            else:
+                if "instagram.com" in url:
+                    await _throttle_instagram()
+                result = await _download_with_retry(url, ydl_opts)
             downloaded_path = result.get("path")
+
+        # Karusel (bir nechta rasm/video) — albom qilib yuboramiz.
+        if api_paths and len(api_paths) > 1:
+            await safe_edit(status, t("uploading", lang))
+            video_exts = (".mp4", ".mov", ".webm")
+            first_is_video = api_paths[0].lower().endswith(video_exts)
+            album_caption = _build_caption({}) if first_is_video else _build_image_caption("")
+            await _send_media_album(bot, message.chat.id, api_paths, album_caption)
+            await status.delete()
+            return
 
         if not downloaded_path or not os.path.exists(downloaded_path):
             await safe_edit(status, t("not_found", lang))
