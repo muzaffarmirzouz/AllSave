@@ -2538,7 +2538,22 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             and "/stories/" in url
             and ("log in" in err_text or "login" in err_text)
         )
-        if "instagram.com" in url and (ig_story_login or any(p in err_text for p in json_error_patterns)):
+        # Instagram "HTTP Error 400: Bad Request" / "login required" — yt-dlp
+        # extractori (yoki uning sessiyasi) Instagram tomonidan rad etilgan.
+        # gallery-dl boshqa API yo'li bilan ishlagani uchun ko'pincha baribir
+        # yuklay oladi — avval UNI sinaymiz, faqat u ham yiqilsa xato beramiz.
+        ig_rejected = "instagram.com" in url and any(
+            p in err_text for p in ("http error 400", "bad request", "login required",
+                                     "rate-limit", "--cookies for the authentication")
+        )
+        # TikTok RASM postlari (tiktok.com/@user/photo/...) — yt-dlp ularni
+        # umuman qo'llab-quvvatlamaydi ("Unsupported URL"), gallery-dl esa
+        # rasmlarni yuklay oladi.
+        tiktok_photo = "tiktok.com" in url and ("/photo/" in url or "unsupported url" in err_text)
+        if tiktok_photo or (
+            "instagram.com" in url
+            and (ig_story_login or ig_rejected or any(p in err_text for p in json_error_patterns))
+        ):
             try:
                 media_dir = tempfile.mkdtemp(dir=tmp_dir)
                 media_paths = await asyncio.to_thread(
@@ -2557,17 +2572,33 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                             gd_caption = _build_image_caption(gd_izoh)
                             await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(p), caption=gd_caption)
                     else:
-                        media = [
-                            InputMediaVideo(media=FSInputFile(p)) if p.lower().endswith(video_exts)
-                            else InputMediaPhoto(media=FSInputFile(p))
-                            for p in media_paths[:10]
-                        ]
+                        # Telegram albomida ko'pi bilan 10 ta fayl bo'ladi —
+                        # TikTok rasm postlarida ko'proq bo'lishi mumkin, shuning
+                        # uchun 10 tadan bo'lib yuboramiz (jami 30 tagacha).
                         first_is_video = media_paths[0].lower().endswith(video_exts)
-                        media[0].caption = (
+                        album_caption = (
                             _build_caption({"description": gd_izoh}) if first_is_video
                             else _build_image_caption(gd_izoh)
                         )
-                        await bot.send_media_group(chat_id=message.chat.id, media=media)
+                        for i in range(0, min(len(media_paths), 30), 10):
+                            chunk = media_paths[i:i + 10]
+                            media = [
+                                InputMediaVideo(media=FSInputFile(p)) if p.lower().endswith(video_exts)
+                                else InputMediaPhoto(media=FSInputFile(p))
+                                for p in chunk
+                            ]
+                            if i == 0:
+                                media[0].caption = album_caption
+                            if len(media) == 1:
+                                p = chunk[0]
+                                if p.lower().endswith(video_exts):
+                                    await bot.send_video(chat_id=message.chat.id, video=FSInputFile(p),
+                                                         caption=media[0].caption)
+                                else:
+                                    await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(p),
+                                                         caption=media[0].caption)
+                            else:
+                                await bot.send_media_group(chat_id=message.chat.id, media=media)
                     await status.delete()
                     for p in media_paths:
                         os.remove(p)
@@ -2575,8 +2606,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                     return
                 shutil.rmtree(media_dir, ignore_errors=True)
             except Exception as ge:
-                log.warning(f"gallery-dl zaxira usuli (JSON xatosi uchun) ham ishlamadi: {ge}")
-                if "login" in str(ge).lower():
+                log.warning(f"gallery-dl zaxira usuli ham ishlamadi: {ge}")
+                if "instagram.com" in url and (ig_rejected or "login" in str(ge).lower()):
                     await safe_edit(status, t("login_required", lang))
                     await _maybe_alert_owner_ig_cookie_issue(bot, str(ge))
                     return
