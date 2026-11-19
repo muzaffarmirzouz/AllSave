@@ -293,3 +293,79 @@ def start_monitor(alert_cb, state_dir: str):
     _state_file = os.path.join(state_dir or ".", "apify_alerts.json")
     log.info(f"Apify monitoringi yoqildi (har {MONITOR_INTERVAL // 60} daqiqada)")
     return asyncio.create_task(_monitor_loop())
+
+
+# ======================================================================
+# Post izohini (caption) olish — Instagram'ning ochiq "embed" sahifasidan
+# ======================================================================
+#
+# Apify API faqat media fayllarni beradi, izohni bermaydi. Izohni
+# instagram.com/p/<kod>/embed/captioned/ sahifasidan olamiz — bu sahifa
+# boshqa saytlarga post joylash uchun mo'ljallangan va login talab qilmaydi.
+# Video yuklanishi bilan PARALLEL ishlaydi; topilmasa — izohsiz davom etiladi.
+
+import html as _html
+import re as _re
+
+_SHORTCODE_RE = _re.compile(r"instagram\.com/(?:[A-Za-z0-9_.]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)")
+_EMBED_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+CAPTION_TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+
+def _caption_from_json(page: str) -> str:
+    # Sahifa ichidagi JSON: "edge_media_to_caption":{"edges":[{"node":{"text":"..."}}]}
+    m = _re.search(r'"edge_media_to_caption"\s*:\s*\{\s*"edges"\s*:\s*\[\s*\{\s*"node"\s*:\s*\{\s*"text"\s*:\s*("(?:[^"\\]|\\.)*")', page)
+    if not m:
+        m = _re.search(r'\\"edge_media_to_caption\\"\s*:\s*\{\s*\\"edges\\"\s*:\s*\[\s*\{\s*\\"node\\"\s*:\s*\{\s*\\"text\\"\s*:\s*(\\"(?:[^\\]|\\\\.|\\[^"])*?\\")', page)
+        if not m:
+            return ""
+        try:
+            return json.loads(json.loads('"' + m.group(1) + '"'))
+        except Exception:
+            return ""
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return ""
+
+
+def _caption_from_html(page: str) -> str:
+    # <div class="Caption"><a class="CaptionUsername" ...>user</a><br/><br/>IZOH<div class="CaptionComments">...
+    m = _re.search(r'<div class="Caption">(.*?)(?:<div class="CaptionComments"|</div>)', page, _re.S)
+    if not m:
+        return ""
+    block = m.group(1)
+    block = _re.sub(r'<a class="CaptionUsername"[^>]*>.*?</a>', "", block, count=1, flags=_re.S)
+    block = _re.sub(r"<br\s*/?>", "\n", block)
+    block = _re.sub(r"<[^>]+>", "", block)
+    return _html.unescape(block).strip()
+
+
+async def fetch_caption(url: str, proxy: Optional[str] = None) -> str:
+    """Post izohini qaytaradi; topilmasa yoki xato bo'lsa bo'sh satr."""
+    m = _SHORTCODE_RE.search(url)
+    if not m:
+        return ""  # story/highlight — izohi yo'q
+    embed = f"https://www.instagram.com/p/{m.group(1)}/embed/captioned/"
+    # aiohttp faqat http(s) proxy'ni qo'llaydi (socks5 bo'lsa proxy'siz).
+    px = proxy if proxy and proxy.lower().startswith("http") else None
+    try:
+        async with aiohttp.ClientSession(headers=_EMBED_HEADERS) as session:
+            async with session.get(embed, proxy=px, timeout=CAPTION_TIMEOUT) as resp:
+                if resp.status != 200:
+                    log.info(f"IG izoh: embed sahifa HTTP {resp.status}")
+                    return ""
+                page = await resp.text()
+    except Exception as e:
+        log.info(f"IG izoh: embed sahifani olib bo'lmadi: {type(e).__name__}: {e}")
+        return ""
+    cap = (_caption_from_json(page) or _caption_from_html(page) or "").strip()
+    log.info(f"IG izoh: {'topildi (' + str(len(cap)) + ' belgi)' if cap else 'topilmadi'}")
+    return cap

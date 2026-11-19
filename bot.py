@@ -2406,7 +2406,11 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 await safe_edit(status, t("downloading", lang))
             # 1) Instagram — AVVAL cookie'siz API (APIFY_TOKEN bo'lsa). U xato
             #    bersa, jim holda eskicha yt-dlp -> gallery-dl yo'liga o'tamiz.
+            ig_caption_task = None
             if "instagram.com" in url and ig_api.enabled():
+                # Izoh (caption) — API bermaydi, shuning uchun embed sahifadan
+                # PARALLEL olinadi (yuklashni sekinlashtirmaydi).
+                ig_caption_task = asyncio.create_task(ig_api.fetch_caption(url, PROXY_URL))
                 try:
                     api_paths = await ig_api.download_instagram(url, tmp_dir, MAX_TELEGRAM_MB)
                 except Exception as e:
@@ -2414,8 +2418,16 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                     api_paths = None
                     await ig_api.report_api_error(e)
             if api_paths:
-                result = {"path": api_paths[0]}
+                ig_izoh = ""
+                if ig_caption_task is not None:
+                    try:
+                        ig_izoh = await asyncio.wait_for(ig_caption_task, timeout=15)
+                    except Exception:
+                        ig_izoh = ""
+                result = {"path": api_paths[0], "description": ig_izoh}
             else:
+                if ig_caption_task is not None:
+                    ig_caption_task.cancel()
                 if "instagram.com" in url:
                     await _throttle_instagram()
                 result = await _download_with_retry(url, ydl_opts)
@@ -2426,7 +2438,8 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
             await safe_edit(status, t("uploading", lang))
             video_exts = (".mp4", ".mov", ".webm")
             first_is_video = api_paths[0].lower().endswith(video_exts)
-            album_caption = _build_caption({}) if first_is_video else _build_image_caption("")
+            _izoh = result.get("description") or ""
+            album_caption = _build_caption({"description": _izoh}) if first_is_video else _build_image_caption(_izoh)
             await _send_media_album(bot, message.chat.id, api_paths, album_caption)
             await status.delete()
             return
