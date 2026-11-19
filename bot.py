@@ -982,6 +982,20 @@ async def cb_set_lang(callback: CallbackQuery, bot: Bot):
         await callback.message.answer(t("start", lang), reply_markup=main_menu_keyboard(lang))
 
 
+@router.message(F.text == "/apify")
+async def cmd_apify(message: Message):
+    """Faqat adminlar: Apify (Instagram API) kreditidan qancha ishlatilgani."""
+    if message.from_user.id not in OWNER_CHAT_IDS:
+        return
+    if not ig_api.enabled():
+        await message.answer("Apify ulanmagan: Railway → Variables → APIFY_TOKEN qo'shilmagan.")
+        return
+    try:
+        await message.answer(ig_api.format_usage(await ig_api.get_usage()))
+    except Exception as e:
+        await message.answer(f"Apify hisobini o'qib bo'lmadi: {e}")
+
+
 @router.message(F.text == "/stats")
 async def cmd_stats(message: Message):
     if not OWNER_CHAT_IDS or message.from_user.id not in OWNER_CHAT_IDS:
@@ -2398,6 +2412,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 except Exception as e:
                     log.warning(f"IG API ishlamadi, yt-dlp'ga o'tiladi: {e}")
                     api_paths = None
+                    await ig_api.report_api_error(e)
             if api_paths:
                 result = {"path": api_paths[0]}
             else:
@@ -2728,6 +2743,7 @@ async def main():
     owner_commands = default_commands + [
         BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
         BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
+        BotCommand(command="apify", description="Instagram API (Apify) krediti qancha qoldi"),
     ]
     for owner_id in OWNER_CHAT_IDS:
         try:
@@ -2739,6 +2755,17 @@ async def main():
         log.info(f"yt-dlp versiyasi: {yt_dlp.version.__version__}")
     except Exception as e:
         log.warning(f"yt-dlp versiyasini aniqlab bo'lmadi: {e}")
+
+    # Apify krediti 80% / 100% ga yetganda yoki API pul/token xatosi
+    # bersa — adminlarga (OWNER_CHAT_IDS) xabar.
+    async def _alert_owners(text: str) -> None:
+        for owner_id in OWNER_CHAT_IDS:
+            try:
+                await bot.send_message(owner_id, text)
+            except Exception as e:
+                log.warning(f"Adminga ({owner_id}) Apify xabarini yuborib bo'lmadi: {e}")
+
+    _apify_monitor = ig_api.start_monitor(_alert_owners, os.path.dirname(os.path.abspath(DB_PATH)))
 
     log.info("Video bot ishga tushmoqda...")
     await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
