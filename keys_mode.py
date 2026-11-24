@@ -67,9 +67,11 @@ KEY_TEXTS = {
 }
 
 
-def kt(key: str, lang: str, **kw) -> str:
+def kt(name: str, lang: str, **kw) -> str:
+    # MUHIM: parametr nomi "key" EMAS — chunki matnga kalit qiymati ham
+    # key=... bilan beriladi (aks holda "got multiple values for argument").
     d = KEY_TEXTS.get(lang) or KEY_TEXTS["uz"]
-    text = d.get(key) or KEY_TEXTS["uz"][key]
+    text = d.get(name) or KEY_TEXTS["uz"][name]
     return text.format(**kw) if kw else text
 
 
