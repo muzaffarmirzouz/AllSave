@@ -55,14 +55,17 @@ KEY_TEXTS = {
     "uz": {
         "your_key": "🔑 Sizning kalitingiz:\n\n<code>{key}</code>\n\nNusxa olish uchun kalit ustiga bosing.",
         "no_keys": "😕 Hozircha bo'sh kalit yo'q. Birozdan keyin qayta urinib ko'ring.",
+        "paused": "🔄 KEYlar yangilanmoqda. Birozdan keyin qayta urinib ko'ring.",
     },
     "ru": {
         "your_key": "🔑 Ваш ключ:\n\n<code>{key}</code>\n\nНажмите на ключ, чтобы скопировать.",
         "no_keys": "😕 Сейчас свободных ключей нет. Попробуйте чуть позже.",
+        "paused": "🔄 KEY-и обновляются. Попробуйте чуть позже.",
     },
     "en": {
         "your_key": "🔑 Your key:\n\n<code>{key}</code>\n\nTap the key to copy it.",
         "no_keys": "😕 No keys available right now. Please try again a bit later.",
+        "paused": "🔄 KEYs are being updated. Please try again a bit later.",
     },
 }
 
@@ -125,6 +128,24 @@ def _clear_keys() -> int:
     conn.commit()
     conn.close()
     return n
+
+
+def _is_paused() -> bool:
+    conn = _conn()
+    row = conn.execute("SELECT v FROM keys_state WHERE k = 'paused'").fetchone()
+    conn.close()
+    return bool(row and row[0] == "1")
+
+
+def _set_paused(paused: bool) -> None:
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO keys_state (k, v) VALUES ('paused', ?) "
+        "ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+        ("1" if paused else "0",),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _next_key():
@@ -212,6 +233,11 @@ async def _give_key(bot: Bot, chat_message: Message, user) -> None:
         await chat_message.answer(B.t("subscribe", lang), reply_markup=B.subscribe_keyboard(lang))
         return
 
+    # Admin /pause qilgan bo'lsa — kalit berilmaydi, "yangilanmoqda" deyiladi.
+    if await asyncio.to_thread(_is_paused):
+        await chat_message.answer(kt("paused", lang))
+        return
+
     async with _lock:  # bir vaqtda kelgan so'rovlar bir xil kalitni olmasligi uchun
         value = await asyncio.to_thread(_next_key)
     if value is None:
@@ -259,7 +285,8 @@ async def cmd_keys(message: Message):
     if not rows:
         await message.answer("Kalitlar yo'q. Qo'shish: /addkey KALIT")
         return
-    lines = [f"🔑 Kalitlar ({len(rows)} ta) — foydalanuvchilarga navbat bilan beriladi:\n"]
+    holat = "⏸ TO'XTATILGAN (/resume bilan yoqing)" if await asyncio.to_thread(_is_paused) else "▶️ ishlayapti"
+    lines = [f"🔑 Kalitlar ({len(rows)} ta) — foydalanuvchilarga navbat bilan beriladi.\nHolat: {holat}\n"]
     for i, (_id, value, given) in enumerate(rows, 1):
         lines.append(f"{i}. <code>{html.escape(value)}</code> — {given} marta berilgan")
     lines.append("\nO'chirish: /delkey RAQAM   •   Hammasini: /clearkeys")
@@ -287,6 +314,27 @@ async def cmd_delkey(message: Message):
         await message.answer("Bunday raqamli kalit yo'q. Ro'yxat: /keys")
         return
     await message.answer(f"🗑 O'chirildi: <code>{html.escape(value)}</code>", parse_mode="HTML")
+
+
+@keys_router.message(F.text.in_({"/pause", "/pause@AllSaveUz_Bot"}))
+async def cmd_pause(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    await asyncio.to_thread(_set_paused, True)
+    await message.answer(
+        "⏸ Kalit berish TO'XTATILDI.\n"
+        "Endi \"key\" yozganlarga \"🔄 KEYlar yangilanmoqda\" degan xabar boradi.\n\n"
+        "Kalitlarni yangilang (/clearkeys, /addkey ...), keyin qayta yoqing: /resume"
+    )
+
+
+@keys_router.message(F.text.in_({"/resume", "/resume@AllSaveUz_Bot"}))
+async def cmd_resume(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    await asyncio.to_thread(_set_paused, False)
+    total = len(await asyncio.to_thread(_list_keys))
+    await message.answer(f"▶️ Kalit berish QAYTA YOQILDI. Jami kalitlar: {total} ta.")
 
 
 @keys_router.message(F.text.in_({"/clearkeys", "/clearkeys@AllSaveUz_Bot"}))

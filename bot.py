@@ -2780,6 +2780,8 @@ async def main():
         BotCommand(command="keys", description="Kalitlar ro'yxati"),
         BotCommand(command="delkey", description="Kalitni o'chirish: /delkey RAQAM"),
         BotCommand(command="clearkeys", description="Barcha kalitlarni o'chirish"),
+        BotCommand(command="pause", description="Kalit berishni to'xtatish (\"KEYlar yangilanmoqda\")"),
+        BotCommand(command="resume", description="Kalit berishni qayta yoqish"),
     ]
     for owner_id in OWNER_CHAT_IDS:
         try:
