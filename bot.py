@@ -959,8 +959,11 @@ async def cmd_start(message: Message, bot: Bot, state: FSMContext):
     track_user(message.from_user.id, message.from_user.username)
     lang = get_user_lang(message.from_user.id)
     if not lang:
-        await message.answer(TEXTS["uz"]["choose_lang"], reply_markup=language_keyboard())
-        return
+        # Yangi foydalanuvchi — til tanlash oynasisiz darhol asosiy til
+        # (rus tili) o'rnatiladi. Xohlasa keyin "🌐 Til" tugmasi / /til
+        # orqali o'zgartiradi. Eski foydalanuvchilarning tanlovi o'zgarmaydi.
+        lang = DEFAULT_LANG
+        set_user_lang(message.from_user.id, lang)
     if not await is_subscribed(bot, message.from_user.id):
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))
         return
