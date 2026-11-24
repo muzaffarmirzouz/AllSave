@@ -32,7 +32,7 @@ import sqlite3
 import time
 
 from aiogram import Router, F, Bot
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
 from bot_ref import bot_mod
 
@@ -198,25 +198,37 @@ async def cmd_done(message: Message):
     await message.answer(f"✅ Tugatildi. Bu safar {st.get('count', 0)} ta kalit qo'shildi. Jami: {total} ta.\nRo'yxat: /keys")
 
 
-@keys_router.message(F.chat.type == "private", F.text, _is_trigger)
-async def handle_key_request(message: Message, bot: Bot):
+async def _give_key(bot: Bot, chat_message: Message, user) -> None:
+    """Majburiy obunani tekshirib, navbatdagi kalitni yuboradi. "key" matni
+    ham, menyudagi "🔑 Key olish" tugmasi ham shu funksiyani chaqiradi."""
     B = bot_mod()
-    user = message.from_user
     B.track_user(user.id, user.username)
     lang = B.get_user_lang(user.id) or "uz"
 
     # Majburiy obuna — a'zo bo'lmasa kalit berilmaydi.
     if not await B.is_subscribed(bot, user.id):
-        await message.answer(B.t("subscribe", lang), reply_markup=B.subscribe_keyboard(lang))
+        await chat_message.answer(B.t("subscribe", lang), reply_markup=B.subscribe_keyboard(lang))
         return
 
     async with _lock:  # bir vaqtda kelgan so'rovlar bir xil kalitni olmasligi uchun
         value = await asyncio.to_thread(_next_key)
     if value is None:
-        await message.answer(kt("no_keys", lang))
+        await chat_message.answer(kt("no_keys", lang))
         return
     logger.info(f"KEY: {user.id} ga kalit berildi")
-    await message.answer(kt("your_key", lang, key=html.escape(value)), parse_mode="HTML")
+    await chat_message.answer(kt("your_key", lang, key=html.escape(value)), parse_mode="HTML")
+
+
+@keys_router.message(F.chat.type == "private", F.text, _is_trigger)
+async def handle_key_request(message: Message, bot: Bot):
+    await _give_key(bot, message, message.from_user)
+
+
+@keys_router.callback_query(F.data == "get_key")
+async def cb_get_key(callback: CallbackQuery, bot: Bot):
+    """Bosh menyudagi "🔑 Key olish" tugmasi."""
+    await callback.answer()
+    await _give_key(bot, callback.message, callback.from_user)
 
 
 def _cmd_args(message: Message) -> str:

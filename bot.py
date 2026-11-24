@@ -904,9 +904,9 @@ def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
 
 
 MAIN_MENU_LABELS = {
-    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "clip": "✂️ YouTube'dan qirqib olish", "music": "\U0001F3B5 Musiqa qidirish", "lang": "\U0001F310 Til"},
-    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "clip": "✂️ Вырезать фрагмент из YouTube", "music": "\U0001F3B5 Поиск музыки", "lang": "\U0001F310 Язык"},
-    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "clip": "✂️ Cut a clip from YouTube", "music": "\U0001F3B5 Music search", "lang": "\U0001F310 Language"},
+    "uz": {"logo": "\U0001F3A8 Videoga Logo qo'yish", "outro": "\U0001F3AC Videoga Outro qo'shish", "caption": "\U0001F4DD Videoga Text qo'yish", "clip": "✂️ YouTube'dan qirqib olish", "music": "\U0001F3B5 Musiqa qidirish", "key": "\U0001F511 Key olish", "lang": "\U0001F310 Til"},
+    "ru": {"logo": "\U0001F3A8 Добавить логотип на видео", "outro": "\U0001F3AC Добавить outro к видео", "caption": "\U0001F4DD Добавить текст на видео", "clip": "✂️ Вырезать фрагмент из YouTube", "music": "\U0001F3B5 Поиск музыки", "key": "\U0001F511 Получить ключ", "lang": "\U0001F310 Язык"},
+    "en": {"logo": "\U0001F3A8 Add logo to video", "outro": "\U0001F3AC Add outro to video", "caption": "\U0001F4DD Add text to video", "clip": "✂️ Cut a clip from YouTube", "music": "\U0001F3B5 Music search", "key": "\U0001F511 Get a key", "lang": "\U0001F310 Language"},
 }
 
 
@@ -918,6 +918,7 @@ def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=labels["caption"], callback_data="mode_caption")],
         [InlineKeyboardButton(text=labels["clip"], callback_data="mode_clip")],
         [InlineKeyboardButton(text=labels["music"], callback_data="mode_music")],
+        [InlineKeyboardButton(text=labels["key"], callback_data="get_key")],
         [InlineKeyboardButton(text=labels["lang"], callback_data="start_til")],
     ])
 
@@ -2754,6 +2755,7 @@ async def main():
         BotCommand(command="captionoff", description="Titr qo'shishni o'chirish"),
         BotCommand(command="clip", description="YouTube videodan kerakli qismni qirqib olish"),
         BotCommand(command="music", description="Musiqa qidirish va videodagi musiqani aniqlash"),
+        BotCommand(command="key", description="Key olish"),
     ]
     # Hamma foydalanuvchi uchun umumiy (standart) buyruqlar ro'yxati —
     # cookies buyruqlari BU YERDA YO'Q, shuning uchun oddiy foydalanuvchilar
