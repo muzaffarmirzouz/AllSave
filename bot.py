@@ -54,6 +54,9 @@ from music_mode import music_router, find_music_keyboard
 # Token bo'lmasa o'chiq turadi; xato bersa bot eskicha yt-dlp yo'liga qaytadi.
 import ig_api
 
+# Kalit (key) tarqatish — "key" so'ziga navbatdagi kalit; adminlar /addkey bilan qo'shadi.
+from keys_mode import keys_router
+
 
 class WatermarkStates(StatesGroup):
     # "Videoga Logo qo'yish" tugmasi bosilgandan keyin, FAQAT keyingi bitta
@@ -2730,6 +2733,10 @@ async def main():
     # caption_mode.py'dagi handlerlarga tekshiriladi.
     # clip_router eng birinchi: u faqat "YouTube havola + vaqt oralig'i" yoki
     # /clip jarayonidagi xabarlarni ushlaydi, oddiy havolalarga tegmaydi.
+    # keys_router ENG BIRINCHI: u faqat aniq "key" so'zi va admin kalit
+    # buyruqlarini (/addkey, /keys, /delkey, /clearkeys) ushlaydi —
+    # kalit ichida havola bo'lsa ham boshqa bo'limlar uni olib ketmaydi.
+    dp.include_router(keys_router)
     dp.include_router(clip_router)
     dp.include_router(caption_router)
     dp.include_router(router)
@@ -2761,6 +2768,10 @@ async def main():
         BotCommand(command="setcookies_ig", description="Instagram cookies'ni yangilash"),
         BotCommand(command="setcookies_yt", description="YouTube cookies'ni yangilash"),
         BotCommand(command="apify", description="Instagram API (Apify) krediti qancha qoldi"),
+        BotCommand(command="addkey", description="Kalit qo'shish (bir nechtasi — har qatorda bittadan)"),
+        BotCommand(command="keys", description="Kalitlar ro'yxati"),
+        BotCommand(command="delkey", description="Kalitni o'chirish: /delkey RAQAM"),
+        BotCommand(command="clearkeys", description="Barcha kalitlarni o'chirish"),
     ]
     for owner_id in OWNER_CHAT_IDS:
         try:

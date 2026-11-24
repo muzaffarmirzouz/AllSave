@@ -1,0 +1,248 @@
+# -*- coding: utf-8 -*-
+"""
+🔑 Kalit (key) tarqatish bo'limi.
+
+Foydalanuvchi:
+    botga  key  deb yozsa (katta-kichik harf farqi yo'q, /key ham bo'ladi) —
+    admin kiritgan kalitlardan NAVBATDAGISI yuboriladi. Kalitlar aylanma
+    tartibda beriladi: 1, 2, 3, ..., oxirgisidan keyin yana 1-dan.
+    Majburiy obunaga a'zo bo'lmagan foydalanuvchiga kalit YUBORILMAYDI —
+    o'rniga obuna bo'lish tugmalari chiqadi.
+
+Admin (OWNER_CHAT_IDS) buyruqlari:
+    /addkey KALIT          — bitta kalit qo'shish
+    /addkey                — keyingi qatorlarga bir nechta kalit (har qatorda bittadan)
+        KALIT1
+        KALIT2
+    /keys                  — barcha kalitlar ro'yxati (raqami va necha marta berilgani)
+    /delkey 3              — 3-raqamli kalitni o'chirish
+    /clearkeys             — hammasini o'chirish
+
+Kalitlar va navbat bazada (DB_PATH) saqlanadi — bot qayta ishga tushsa ham
+yo'qolmaydi. Botning boshqa funksiyalariga ta'sir qilmaydi: router faqat
+"key" so'zi va yuqoridagi admin buyruqlarini ushlaydi.
+"""
+
+import asyncio
+import html
+import logging
+import sqlite3
+
+from aiogram import Router, F, Bot
+from aiogram.types import Message
+
+from bot_ref import bot_mod
+
+logger = logging.getLogger(__name__)
+
+keys_router = Router(name="keys_mode")
+
+# Foydalanuvchi shu so'zlardan birini yozsa kalit beriladi (kichik harfda).
+TRIGGER_WORDS = {"key", "/key"}
+
+_lock = asyncio.Lock()
+
+KEY_TEXTS = {
+    "uz": {
+        "your_key": "🔑 Sizning kalitingiz:\n\n<code>{key}</code>\n\nNusxa olish uchun kalit ustiga bosing.",
+        "no_keys": "😕 Hozircha bo'sh kalit yo'q. Birozdan keyin qayta urinib ko'ring.",
+    },
+    "ru": {
+        "your_key": "🔑 Ваш ключ:\n\n<code>{key}</code>\n\nНажмите на ключ, чтобы скопировать.",
+        "no_keys": "😕 Сейчас свободных ключей нет. Попробуйте чуть позже.",
+    },
+    "en": {
+        "your_key": "🔑 Your key:\n\n<code>{key}</code>\n\nTap the key to copy it.",
+        "no_keys": "😕 No keys available right now. Please try again a bit later.",
+    },
+}
+
+
+def kt(key: str, lang: str, **kw) -> str:
+    d = KEY_TEXTS.get(lang) or KEY_TEXTS["uz"]
+    text = d.get(key) or KEY_TEXTS["uz"][key]
+    return text.format(**kw) if kw else text
+
+
+# ------------------------------------------------------------------ baza
+
+def _conn():
+    conn = sqlite3.connect(bot_mod().DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS keys_pool ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " value TEXT NOT NULL,"
+        " given INTEGER NOT NULL DEFAULT 0,"
+        " created TEXT DEFAULT (datetime('now')))"
+    )
+    conn.execute("CREATE TABLE IF NOT EXISTS keys_state (k TEXT PRIMARY KEY, v TEXT)")
+    return conn
+
+
+def _list_keys() -> list:
+    conn = _conn()
+    rows = conn.execute("SELECT id, value, given FROM keys_pool ORDER BY id").fetchall()
+    conn.close()
+    return rows
+
+
+def _add_keys(values: list) -> int:
+    conn = _conn()
+    conn.executemany("INSERT INTO keys_pool (value) VALUES (?)", [(v,) for v in values])
+    conn.commit()
+    conn.close()
+    return len(values)
+
+
+def _delete_by_position(pos: int):
+    rows = _list_keys()
+    if not 1 <= pos <= len(rows):
+        return None
+    key_id, value, _ = rows[pos - 1]
+    conn = _conn()
+    conn.execute("DELETE FROM keys_pool WHERE id = ?", (key_id,))
+    conn.commit()
+    conn.close()
+    return value
+
+
+def _clear_keys() -> int:
+    conn = _conn()
+    n = conn.execute("SELECT COUNT(*) FROM keys_pool").fetchone()[0]
+    conn.execute("DELETE FROM keys_pool")
+    conn.execute("DELETE FROM keys_state WHERE k = 'last_id'")
+    conn.commit()
+    conn.close()
+    return n
+
+
+def _next_key():
+    """Navbatdagi kalitni qaytaradi (aylanma tartib) va hisobini oshiradi.
+    Oxirgi berilgan kalitning id'si saqlanadi — kalit o'chirilsa yoki
+    yangisi qo'shilsa ham navbat to'g'ri davom etadi."""
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT v FROM keys_state WHERE k = 'last_id'").fetchone()
+        last_id = int(row[0]) if row else 0
+        nxt = conn.execute(
+            "SELECT id, value FROM keys_pool WHERE id > ? ORDER BY id LIMIT 1", (last_id,)
+        ).fetchone()
+        if nxt is None:  # ro'yxat oxiriga yetdik — boshidan
+            nxt = conn.execute("SELECT id, value FROM keys_pool ORDER BY id LIMIT 1").fetchone()
+        if nxt is None:
+            return None
+        key_id, value = nxt
+        conn.execute("UPDATE keys_pool SET given = given + 1 WHERE id = ?", (key_id,))
+        conn.execute(
+            "INSERT INTO keys_state (k, v) VALUES ('last_id', ?) "
+            "ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            (str(key_id),),
+        )
+        conn.commit()
+        return value
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------- handlerlar
+
+def _is_owner(user_id: int) -> bool:
+    try:
+        return user_id in bot_mod().OWNER_CHAT_IDS
+    except Exception:
+        return False
+
+
+def _is_trigger(m: Message) -> bool:
+    return (m.text or "").strip().lower() in TRIGGER_WORDS
+
+
+@keys_router.message(F.chat.type == "private", F.text, _is_trigger)
+async def handle_key_request(message: Message, bot: Bot):
+    B = bot_mod()
+    user = message.from_user
+    B.track_user(user.id, user.username)
+    lang = B.get_user_lang(user.id) or "uz"
+
+    # Majburiy obuna — a'zo bo'lmasa kalit berilmaydi.
+    if not await B.is_subscribed(bot, user.id):
+        await message.answer(B.t("subscribe", lang), reply_markup=B.subscribe_keyboard(lang))
+        return
+
+    async with _lock:  # bir vaqtda kelgan so'rovlar bir xil kalitni olmasligi uchun
+        value = await asyncio.to_thread(_next_key)
+    if value is None:
+        await message.answer(kt("no_keys", lang))
+        return
+    logger.info(f"KEY: {user.id} ga kalit berildi")
+    await message.answer(kt("your_key", lang, key=html.escape(value)), parse_mode="HTML")
+
+
+def _cmd_args(message: Message) -> str:
+    text = message.text or ""
+    parts = text.split(maxsplit=1)
+    return parts[1] if len(parts) > 1 else ""
+
+
+@keys_router.message(F.text.startswith("/addkey"))
+async def cmd_addkey(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    values = [v.strip() for v in _cmd_args(message).splitlines() if v.strip()]
+    if not values:
+        await message.answer(
+            "Kalit qo'shish:\n\n"
+            "/addkey KALIT\n\n"
+            "yoki bir nechtasini birdan (har qatorda bittadan):\n"
+            "/addkey\nKALIT1\nKALIT2\nKALIT3"
+        )
+        return
+    n = await asyncio.to_thread(_add_keys, values)
+    total = len(await asyncio.to_thread(_list_keys))
+    await message.answer(f"✅ {n} ta kalit qo'shildi. Jami: {total} ta.")
+
+
+@keys_router.message(F.text.in_({"/keys", "/keys@AllSaveUz_Bot"}))
+async def cmd_keys(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    rows = await asyncio.to_thread(_list_keys)
+    if not rows:
+        await message.answer("Kalitlar yo'q. Qo'shish: /addkey KALIT")
+        return
+    lines = [f"🔑 Kalitlar ({len(rows)} ta) — foydalanuvchilarga navbat bilan beriladi:\n"]
+    for i, (_id, value, given) in enumerate(rows, 1):
+        lines.append(f"{i}. <code>{html.escape(value)}</code> — {given} marta berilgan")
+    lines.append("\nO'chirish: /delkey RAQAM   •   Hammasini: /clearkeys")
+    text = "\n".join(lines)
+    # Telegram xabari 4096 belgidan oshmasligi uchun bo'lib yuboramiz.
+    while text:
+        chunk = text[:4000]
+        if len(text) > 4000:
+            cut = chunk.rfind("\n")
+            chunk = text[:cut if cut > 0 else 4000]
+        await message.answer(chunk, parse_mode="HTML")
+        text = text[len(chunk):].lstrip("\n")
+
+
+@keys_router.message(F.text.startswith("/delkey"))
+async def cmd_delkey(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    arg = _cmd_args(message).strip()
+    if not arg.isdigit():
+        await message.answer("Foydalanish: /delkey RAQAM  (raqamni /keys ro'yxatidan oling)")
+        return
+    value = await asyncio.to_thread(_delete_by_position, int(arg))
+    if value is None:
+        await message.answer("Bunday raqamli kalit yo'q. Ro'yxat: /keys")
+        return
+    await message.answer(f"🗑 O'chirildi: <code>{html.escape(value)}</code>", parse_mode="HTML")
+
+
+@keys_router.message(F.text.in_({"/clearkeys", "/clearkeys@AllSaveUz_Bot"}))
+async def cmd_clearkeys(message: Message):
+    if not _is_owner(message.from_user.id):
+        return
+    n = await asyncio.to_thread(_clear_keys)
+    await message.answer(f"🗑 {n} ta kalit o'chirildi.")
