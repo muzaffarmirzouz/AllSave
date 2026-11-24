@@ -70,7 +70,7 @@ KEY_TEXTS = {
 def kt(name: str, lang: str, **kw) -> str:
     # MUHIM: parametr nomi "key" EMAS — chunki matnga kalit qiymati ham
     # key=... bilan beriladi (aks holda "got multiple values for argument").
-    d = KEY_TEXTS.get(lang) or KEY_TEXTS["uz"]
+    d = KEY_TEXTS.get(lang) or KEY_TEXTS["ru"]
     text = d.get(name) or KEY_TEXTS["uz"][name]
     return text.format(**kw) if kw else text
 
@@ -205,7 +205,7 @@ async def _give_key(bot: Bot, chat_message: Message, user) -> None:
     handleri shu funksiyani chaqiradi."""
     B = bot_mod()
     B.track_user(user.id, user.username)
-    lang = B.get_user_lang(user.id) or "uz"
+    lang = B.get_user_lang(user.id) or "ru"
 
     # Majburiy obuna — a'zo bo'lmasa kalit berilmaydi.
     if not await B.is_subscribed(bot, user.id):

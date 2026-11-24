@@ -321,9 +321,9 @@ def get_lang(user_id: int) -> str:
     """bot.py'da saqlangan foydalanuvchi tilini o'qiydi (uz/ru/en).
     Import funksiya ICHIDA — circular import bo'lmasligi uchun."""
     try:
-        return bot_mod().get_user_lang(user_id) or "uz"
+        return bot_mod().get_user_lang(user_id) or "ru"
     except Exception:
-        return "uz"
+        return "ru"
 
 
 def get_bot_tag() -> str:
@@ -335,7 +335,7 @@ def get_bot_tag() -> str:
 
 
 def ct(key: str, lang: str, **kwargs) -> str:
-    lang = lang if lang in CAPTION_TEXTS else "uz"
+    lang = lang if lang in CAPTION_TEXTS else "ru"
     text = CAPTION_TEXTS[lang].get(key) or CAPTION_TEXTS["uz"].get(key, "")
     return text.format(**kwargs) if kwargs else text
 
@@ -658,7 +658,7 @@ async def download_video(url: str, output_path: str) -> bool:
     return False
 
 
-async def process_and_reply(message: Message, status: Message, src_path: Path, tmp: Path, lang: str = "uz"):
+async def process_and_reply(message: Message, status: Message, src_path: Path, tmp: Path, lang: str = "ru"):
     """Audio ajratish -> transkript -> ASS -> kuydirish -> yuborish."""
 
     duration = await get_duration(src_path)

@@ -206,16 +206,16 @@ MUSIC_TEXTS = {
 
 
 def mt(key: str, lang: str, **kwargs) -> str:
-    lang = lang if lang in MUSIC_TEXTS else "uz"
+    lang = lang if lang in MUSIC_TEXTS else "ru"
     text = MUSIC_TEXTS[lang].get(key) or MUSIC_TEXTS["uz"].get(key, "")
     return text.format(**kwargs) if kwargs else text
 
 
 def _lang(user_id: int) -> str:
     try:
-        return bot_mod().get_user_lang(user_id) or "uz"
+        return bot_mod().get_user_lang(user_id) or "ru"
     except Exception:
-        return "uz"
+        return "ru"
 
 
 def find_music_keyboard(lang: str) -> InlineKeyboardMarkup:

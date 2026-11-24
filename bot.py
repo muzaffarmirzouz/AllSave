@@ -501,7 +501,11 @@ async def is_subscribed(bot: Bot, user_id: int) -> bool:
         return False
 
 
-LANGUAGES = {"uz": "\U0001F1FA\U0001F1FF O'zbekcha", "ru": "\U0001F1F7\U0001F1FA Русский", "en": "\U0001F1EC\U0001F1E7 English"}
+# Standart (asosiy) til — foydalanuvchi hali til tanlamagan bo'lsa shu ishlatiladi.
+DEFAULT_LANG = "ru"
+
+# Til tanlash tugmalari tartibi: rus tili birinchi.
+LANGUAGES = {"ru": "\U0001F1F7\U0001F1FA Русский", "uz": "\U0001F1FA\U0001F1FF O'zbekcha", "en": "\U0001F1EC\U0001F1E7 English"}
 
 TEXTS = {
     "uz": {
@@ -884,7 +888,7 @@ TEXTS = {
 
 
 def t(key: str, lang: str) -> str:
-    lang = lang if lang in TEXTS else "uz"
+    lang = lang if lang in TEXTS else DEFAULT_LANG
     return TEXTS[lang].get(key, TEXTS["uz"].get(key, ""))
 
 
@@ -895,7 +899,7 @@ def language_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def subscribe_keyboard(lang: str = "uz") -> InlineKeyboardMarkup:
+def subscribe_keyboard(lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     channel_url = f"https://t.me/{REQUIRED_CHANNEL.lstrip('@')}"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t("btn_channel", lang), url=channel_url)],
@@ -911,7 +915,7 @@ MAIN_MENU_LABELS = {
 
 
 def main_menu_keyboard(lang: str) -> InlineKeyboardMarkup:
-    labels = MAIN_MENU_LABELS.get(lang, MAIN_MENU_LABELS["uz"])
+    labels = MAIN_MENU_LABELS.get(lang, MAIN_MENU_LABELS[DEFAULT_LANG])
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=labels["logo"], callback_data="start_setlogo")],
         [InlineKeyboardButton(text=labels["outro"], callback_data="start_setoutro")],
@@ -1065,8 +1069,8 @@ async def cmd_broadcast(message: Message, bot: Bot):
     sent, failed = 0, 0
 
     for i, (uid, user_lang) in enumerate(rows, start=1):
-        lang = user_lang if user_lang in sections else "uz"
-        text_to_send = sections.get(lang) or sections.get("uz", "")
+        lang = user_lang if user_lang in sections else DEFAULT_LANG
+        text_to_send = sections.get(lang) or sections.get(DEFAULT_LANG) or sections.get("uz", "")
         try:
             await bot.send_message(uid, text_to_send)
             sent += 1
@@ -1088,7 +1092,7 @@ async def cmd_broadcast(message: Message, bot: Bot):
 
 @router.callback_query(F.data == "check_sub")
 async def cb_check_sub(callback: CallbackQuery, bot: Bot):
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     if await is_subscribed(bot, callback.from_user.id):
         await safe_edit(callback.message, t("subscribed_thanks", lang))
         await callback.answer()
@@ -1105,7 +1109,7 @@ async def cb_start_setlogo(callback: CallbackQuery, state: FSMContext):
     bilan davom etish yoki yangisiga almashtirish o'rtasida tanlov
     beradi. Agar logo hali sozlanmagan bo'lsa — to'g'ridan-to'g'ri uni
     sozlashni so'raydi."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     if _find_user_logo(callback.from_user.id):
         await callback.message.answer(t("logo_exists_choice", lang), reply_markup=logo_choice_keyboard(lang))
@@ -1129,7 +1133,7 @@ async def cb_logo_continue(callback: CallbackQuery, state: FSMContext):
     ikkalasini istagan kombinatsiyada birga yoqib qo'yish mumkin. FSM
     holati ham (eskisidek) qo'yiladi — bu faqat "video FAYL to'g'ridan-
     to'g'ri yuborilganda" logo qo'llash uchun kerak."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     set_user_logo_enabled(callback.from_user.id, True)
     await state.set_state(WatermarkStates.waiting_video)
@@ -1142,7 +1146,7 @@ async def cb_logo_continue(callback: CallbackQuery, state: FSMContext):
 async def cb_logo_replace(callback: CallbackQuery):
     """Yangi logo yuklash tanlandi — eskisi keyingi fayl yuborilganda
     avtomatik almashtiriladi (handle_logo_upload'da)."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     _awaiting_logo_from.add(callback.from_user.id)
     await callback.message.answer(t("setlogo_prompt", lang))
@@ -1153,7 +1157,7 @@ async def cb_start_setoutro(callback: CallbackQuery, state: FSMContext):
     """Asosiy menyudagi '🎬 Videoga Outro qo'shish' tugmasi — logo bilan
     bir xil mantiq (mavjud outro bilan davom etish / almashtirish /
     hali sozlanmagan bo'lsa to'g'ridan-to'g'ri so'rash)."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     if _find_user_outro(callback.from_user.id):
         await callback.message.answer(t("outro_exists_choice", lang), reply_markup=outro_choice_keyboard(lang))
@@ -1175,7 +1179,7 @@ async def cb_outro_continue(callback: CallbackQuery, state: FSMContext):
     """Mavjud outro bilan davom etish tanlandi — outro rejimini yoqadi.
     MUSTAQIL: Logo rejimidan qat'i nazar ishlaydi — ikkalasi birga ham
     yoqilgan bo'lishi mumkin."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     set_user_outro_enabled(callback.from_user.id, True)
     await callback.message.answer(
@@ -1187,7 +1191,7 @@ async def cb_outro_continue(callback: CallbackQuery, state: FSMContext):
 async def cb_outro_replace(callback: CallbackQuery):
     """Yangi outro yuklash tanlandi — eskisi keyingi video yuborilganda
     avtomatik almashtiriladi (handle_outro_upload'da)."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     _awaiting_outro_from.add(callback.from_user.id)
     await callback.message.answer(t("setoutro_prompt", lang))
@@ -1725,7 +1729,7 @@ async def _do_logooff(user_id: int, lang: str) -> str:
 async def cmd_logooff(message: Message, state: FSMContext):
     """Foydalanuvchining shaxsiy logotipini bitta oddiy buyruq bilan
     o'chiradi."""
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     text = await _do_logooff(message.from_user.id, lang)
     await state.clear()
     await message.answer(text)
@@ -1734,7 +1738,7 @@ async def cmd_logooff(message: Message, state: FSMContext):
 @router.callback_query(F.data == "logo_off")
 async def cb_logo_off(callback: CallbackQuery, state: FSMContext):
     """Logo bo'limidagi '🚫 Logoni o'chirish' tugmasi — /logooff bilan bir xil."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     text = await _do_logooff(callback.from_user.id, lang)
     await state.clear()
@@ -1767,7 +1771,7 @@ async def _do_outrooff(user_id: int, lang: str) -> str:
 async def cmd_outrooff(message: Message, state: FSMContext):
     """Foydalanuvchining shaxsiy outro videosini bitta oddiy buyruq bilan
     o'chiradi."""
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     text = await _do_outrooff(message.from_user.id, lang)
     await state.clear()
     await message.answer(text)
@@ -1776,7 +1780,7 @@ async def cmd_outrooff(message: Message, state: FSMContext):
 @router.callback_query(F.data == "outro_off")
 async def cb_outro_off(callback: CallbackQuery, state: FSMContext):
     """Outro bo'limidagi '🚫 Outro'ni o'chirish' tugmasi — /outrooff bilan bir xil."""
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     await callback.answer()
     text = await _do_outrooff(callback.from_user.id, lang)
     await state.clear()
@@ -1788,7 +1792,7 @@ async def cmd_setoutro(message: Message):
     """Agar shaxsiy outro allaqachon bor bo'lsa — davom etish yoki
     almashtirish o'rtasida tanlov beradi; bo'lmasa, yangi outro sozlashni
     so'raydi."""
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     if _find_user_outro(message.from_user.id):
         await message.answer(t("outro_exists_choice", lang), reply_markup=outro_choice_keyboard(lang))
     else:
@@ -1801,7 +1805,7 @@ async def cmd_setlogo(message: Message):
     """Agar shaxsiy logo allaqachon bor bo'lsa — davom etish yoki
     almashtirish o'rtasida tanlov beradi; bo'lmasa, yangi logo sozlashni
     so'raydi."""
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     if _find_user_logo(message.from_user.id):
         await message.answer(t("logo_exists_choice", lang), reply_markup=logo_choice_keyboard(lang))
     else:
@@ -1813,8 +1817,8 @@ async def cmd_setlogo(message: Message):
 async def cmd_setposition(message: Message):
     """Foydalanuvchi o'z logotipi videoning qaysi qismida chiqishini
     tugmalar orqali tanlaydi (shaxsiy sozlama)."""
-    lang = get_user_lang(message.from_user.id) or "uz"
-    labels = POSITION_LABELS.get(lang, POSITION_LABELS["uz"])
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
+    labels = POSITION_LABELS.get(lang, POSITION_LABELS[DEFAULT_LANG])
     current = get_user_logo_position(message.from_user.id)
     buttons = []
     row = []
@@ -1834,13 +1838,13 @@ async def cmd_setposition(message: Message):
 
 @router.callback_query(F.data.startswith("logopos:"))
 async def cb_set_position(callback: CallbackQuery):
-    lang = get_user_lang(callback.from_user.id) or "uz"
+    lang = get_user_lang(callback.from_user.id) or DEFAULT_LANG
     key = callback.data.split(":", 1)[1]
     if key not in LOGO_POSITIONS:
         await callback.answer(t("unknown_position", lang))
         return
     set_user_logo_position(callback.from_user.id, key)
-    label = POSITION_LABELS.get(lang, POSITION_LABELS["uz"])[key]
+    label = POSITION_LABELS.get(lang, POSITION_LABELS[DEFAULT_LANG])[key]
     await safe_edit(callback.message, t("position_changed", lang).format(label=label))
     await callback.answer()
 
@@ -1907,7 +1911,7 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
     # stiker yuborsa — buni tushunarli aytamiz (outro FAQAT oddiy video
     # bo'lishi kerak, handle_outro_upload buni F.video orqali kutadi).
     if message.from_user.id in _awaiting_outro_from:
-        lang = get_user_lang(message.from_user.id) or "uz"
+        lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
         await message.answer(t("outro_not_video", lang))
         return
 
@@ -1931,7 +1935,7 @@ async def handle_logo_upload(message: Message, bot: Bot, state: FSMContext):
                 "SO'NG cookies.txt faylini yuboring."
             )
         return
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
 
     # Stiker bo'lsa: "video-stiker" (.webm) to'g'ridan-to'g'ri, eski turdagi
     # (".tgs", vektor/Lottie) esa rlottie orqali APNG'ga o'girilib olinadi
@@ -1992,7 +1996,7 @@ async def handle_outro_upload(message: Message, bot: Bot, state: FSMContext):
     handler pastdagi 'handle_owner_video'dan OLDIN ro'yxatdan o'tkazilgan
     — shunda outro kutilayotgan foydalanuvchining videosi noto'g'ri
     ravishda "logo qo'yiladigan video" sifatida ishlov olmaydi."""
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     if message.video.file_size and message.video.file_size > TG_DOWNLOAD_LIMIT:
         await message.answer(TOO_BIG_TEXT)
         return
@@ -2048,7 +2052,7 @@ async def handle_owner_video(message: Message, bot: Bot):
     ham yoqilgan bo'lsa, avval logo (watermark), so'ng outro qo'llanadi.
     Majburiy obunani ham talab qiladi."""
     log.info(f"WMARK: handler boshlandi, user={message.from_user.id}")
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
     logo_file = _find_user_logo(message.from_user.id) if get_user_logo_enabled(message.from_user.id) else None
     outro_file = _find_user_outro(message.from_user.id) if get_user_outro_enabled(message.from_user.id) else None
     if not logo_file and not outro_file:
@@ -2282,7 +2286,7 @@ URL_IN_TEXT_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 @router.message(F.text.regexp(r"(?i)https?://\S+"))
 async def handle_link(message: Message, bot: Bot, state: FSMContext):
     track_user(message.from_user.id, message.from_user.username)
-    lang = get_user_lang(message.from_user.id) or "uz"
+    lang = get_user_lang(message.from_user.id) or DEFAULT_LANG
 
     if not await is_subscribed(bot, message.from_user.id):
         await message.answer(t("subscribe", lang), reply_markup=subscribe_keyboard(lang))

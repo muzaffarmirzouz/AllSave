@@ -234,16 +234,16 @@ CLIP_TEXTS = {
 
 
 def ct(key: str, lang: str, **kwargs) -> str:
-    lang = lang if lang in CLIP_TEXTS else "uz"
+    lang = lang if lang in CLIP_TEXTS else "ru"
     text = CLIP_TEXTS[lang].get(key) or CLIP_TEXTS["uz"].get(key, "")
     return text.format(**kwargs) if kwargs else text
 
 
 def _lang(user_id: int) -> str:
     try:
-        return _bot_mod().get_user_lang(user_id) or "uz"
+        return _bot_mod().get_user_lang(user_id) or "ru"
     except Exception:
-        return "uz"
+        return "ru"
 
 
 # ------------------------------------------------------------ vaqt va havola
