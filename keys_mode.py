@@ -200,7 +200,7 @@ async def cmd_done(message: Message):
 
 async def _give_key(bot: Bot, chat_message: Message, user) -> None:
     """Majburiy obunani tekshirib, navbatdagi kalitni yuboradi. "key" matni
-    ham, menyudagi "🔑 Key olish" tugmasi ham shu funksiyani chaqiradi."""
+    handleri shu funksiyani chaqiradi."""
     B = bot_mod()
     B.track_user(user.id, user.username)
     lang = B.get_user_lang(user.id) or "uz"
@@ -222,13 +222,6 @@ async def _give_key(bot: Bot, chat_message: Message, user) -> None:
 @keys_router.message(F.chat.type == "private", F.text, _is_trigger)
 async def handle_key_request(message: Message, bot: Bot):
     await _give_key(bot, message, message.from_user)
-
-
-@keys_router.callback_query(F.data == "get_key")
-async def cb_get_key(callback: CallbackQuery, bot: Bot):
-    """Bosh menyudagi "🔑 Key olish" tugmasi."""
-    await callback.answer()
-    await _give_key(bot, callback.message, callback.from_user)
 
 
 def _cmd_args(message: Message) -> str:
