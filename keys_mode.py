@@ -11,9 +11,11 @@ Foydalanuvchi:
 
 Admin (OWNER_CHAT_IDS) buyruqlari:
     /addkey KALIT          — bitta kalit qo'shish
-    /addkey                — keyingi qatorlarga bir nechta kalit (har qatorda bittadan)
-        KALIT1
-        KALIT2
+    /addkey                — QABUL REJIMI: shundan keyin yuborilgan har bir
+                             xabar kalit bo'lib qo'shiladi (bir xabarda bir
+                             nechta qator bo'lsa — har qatori alohida kalit);
+                             /done bilan tugaydi (yoki 10 daqiqa jimlikdan keyin)
+    /addkey KALIT1\nKALIT2  — bir xabarda bir nechtasini darhol qo'shish
     /keys                  — barcha kalitlar ro'yxati (raqami va necha marta berilgani)
     /delkey 3              — 3-raqamli kalitni o'chirish
     /clearkeys             — hammasini o'chirish
@@ -27,6 +29,7 @@ import asyncio
 import html
 import logging
 import sqlite3
+import time
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message
@@ -41,6 +44,12 @@ keys_router = Router(name="keys_mode")
 TRIGGER_WORDS = {"key", "/key"}
 
 _lock = asyncio.Lock()
+
+# Admin "kalit qabul qilish" rejimi: /addkey (argumentsiz) -> keyingi har bir
+# xabar kalit sifatida qo'shiladi; /done bilan yoki ADD_MODE_TIMEOUT soniya
+# jimlikdan keyin avtomatik tugaydi. {admin_id: {"last": vaqt, "count": n}}
+ADD_MODE_TIMEOUT = 10 * 60
+_add_mode: dict = {}
 
 KEY_TEXTS = {
     "uz": {
@@ -157,6 +166,38 @@ def _is_trigger(m: Message) -> bool:
     return (m.text or "").strip().lower() in TRIGGER_WORDS
 
 
+def _in_add_mode(m: Message) -> bool:
+    if not m.from_user or m.from_user.id not in _add_mode:
+        return False
+    if time.monotonic() - _add_mode[m.from_user.id]["last"] > ADD_MODE_TIMEOUT:
+        _add_mode.pop(m.from_user.id, None)  # muddati o'tdi
+        return False
+    return not (m.text or "").startswith("/")
+
+
+@keys_router.message(F.chat.type == "private", F.text, _in_add_mode)
+async def handle_key_input(message: Message):
+    """Qabul rejimidagi admin yuborgan xabar — kalit(lar) sifatida qo'shiladi."""
+    values = [v.strip() for v in (message.text or "").splitlines() if v.strip()]
+    if not values:
+        return
+    n = await asyncio.to_thread(_add_keys, values)
+    st = _add_mode.get(message.from_user.id) or {"count": 0}
+    st["count"] = st.get("count", 0) + n
+    st["last"] = time.monotonic()
+    _add_mode[message.from_user.id] = st
+    total = len(await asyncio.to_thread(_list_keys))
+    await message.answer(f"✅ +{n} (bu safar: {st['count']}, jami: {total}). Davom eting yoki /done")
+
+
+@keys_router.message(F.text.in_({"/done", "/stop", "/done@AllSaveUz_Bot", "/stop@AllSaveUz_Bot"}),
+                     lambda m: bool(m.from_user) and m.from_user.id in _add_mode)
+async def cmd_done(message: Message):
+    st = _add_mode.pop(message.from_user.id, None) or {"count": 0}
+    total = len(await asyncio.to_thread(_list_keys))
+    await message.answer(f"✅ Tugatildi. Bu safar {st.get('count', 0)} ta kalit qo'shildi. Jami: {total} ta.\nRo'yxat: /keys")
+
+
 @keys_router.message(F.chat.type == "private", F.text, _is_trigger)
 async def handle_key_request(message: Message, bot: Bot):
     B = bot_mod()
@@ -190,11 +231,12 @@ async def cmd_addkey(message: Message):
         return
     values = [v.strip() for v in _cmd_args(message).splitlines() if v.strip()]
     if not values:
+        _add_mode[message.from_user.id] = {"last": time.monotonic(), "count": 0}
         await message.answer(
-            "Kalit qo'shish:\n\n"
-            "/addkey KALIT\n\n"
-            "yoki bir nechtasini birdan (har qatorda bittadan):\n"
-            "/addkey\nKALIT1\nKALIT2\nKALIT3"
+            "🔑 Kalit qabul qilish rejimi YOQILDI.\n\n"
+            "Endi kalitlarni yuboravering — har bir xabar kalit bo'lib qo'shiladi "
+            "(bir xabarda bir nechta qator bo'lsa, har qatori alohida kalit).\n\n"
+            "Tugatish: /done"
         )
         return
     n = await asyncio.to_thread(_add_keys, values)
