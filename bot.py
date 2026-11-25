@@ -2432,6 +2432,14 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                     raise
                 log.warning(f"Eski usul (yt-dlp) ishlamadi, IG API'ga o'tiladi: {old_err}")
                 await ig_api.report_proxy_error(str(old_err))
+                # Cookie sessiyasi bekor bo'lgan bo'lsa (login sahifasiga
+                # yo'naltirish / login_required / rate-limit) — Apify videoni
+                # baribir yuklasa ham adminga cookie'ni yangilash haqida xabar
+                # (avval bu holatda ogohlantirish kelmay qolardi).
+                _oe = str(old_err).lower()
+                if any(p in _oe for p in ("login page", "login required", "login_required",
+                                          "rate-limit", "--cookies for the authentication")):
+                    await _maybe_alert_owner_ig_cookie_issue(bot, str(old_err))
                 # API izoh bermaydi — embed sahifadan PARALLEL urinib ko'ramiz.
                 ig_caption_task = asyncio.create_task(ig_api.fetch_caption(url, PROXY_URL))
                 try:
