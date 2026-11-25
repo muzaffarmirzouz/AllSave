@@ -2431,6 +2431,7 @@ async def handle_link(message: Message, bot: Bot, state: FSMContext):
                 if not use_api:
                     raise
                 log.warning(f"Eski usul (yt-dlp) ishlamadi, IG API'ga o'tiladi: {old_err}")
+                await ig_api.report_proxy_error(str(old_err))
                 # API izoh bermaydi — embed sahifadan PARALLEL urinib ko'ramiz.
                 ig_caption_task = asyncio.create_task(ig_api.fetch_caption(url, PROXY_URL))
                 try:

@@ -45,6 +45,10 @@ _EXT_BY_MIME = {
 }
 
 
+# Qayta urinishga arziydigan (vaqtinchalik) API xato kodlari.
+RETRYABLE_CODES = {"UPSTREAM_TIMEOUT", "UPSTREAM_ERROR", "RATE_LIMITED", "RATE_LIMIT", "TIMEOUT", "HTTP_429"}
+
+
 class IgApiError(Exception):
     """API natija bermadi — chaqiruvchi zaxira usulga (yt-dlp) o'tadi."""
 
@@ -123,7 +127,16 @@ async def download_instagram(url: str, out_dir: str, max_mb: int = 50, max_items
         raise IgApiError("DISABLED")
     max_bytes = max_mb * 1024 * 1024
     async with aiohttp.ClientSession() as session:
-        media = await _fetch_media_list(session, url)
+        # Xizmat tomonidagi vaqtinchalik xatolar (UPSTREAM_TIMEOUT, rate-limit,
+        # 5xx) — bir marta qayta urinamiz. Bunday so'rovlar uchun pul olinmaydi.
+        try:
+            media = await _fetch_media_list(session, url)
+        except IgApiError as e:
+            if e.code not in RETRYABLE_CODES and not e.code.startswith("HTTP_5"):
+                raise
+            log.info(f"IG API vaqtinchalik xato ({e.code}) — 3 soniyadan keyin qayta urinish")
+            await asyncio.sleep(3)
+            media = await _fetch_media_list(session, url)
         paths = []
         for i, item in enumerate(media[:max_items]):
             p = await _download_one(session, item, out_dir, i, max_bytes)
@@ -272,6 +285,28 @@ async def report_api_error(err: Exception) -> None:
     except Exception:
         pass
     await _alert(text)
+
+
+_last_proxy_alert = 0.0
+
+
+async def report_proxy_error(err_text: str) -> None:
+    """yt-dlp xatosida proxy autentifikatsiyasi rad etilgani (HTTP 407) yoki
+    proxy'ga ulanib bo'lmagani ko'rinsa — adminlarga xabar (6 soatda 1 marta)."""
+    global _last_proxy_alert
+    low = (err_text or "").lower()
+    if not ("response 407" in low or "407 proxy" in low or "proxy authentication required" in low):
+        return
+    now = time.monotonic()
+    if _last_proxy_alert and now - _last_proxy_alert < ALERT_COOLDOWN:
+        return
+    _last_proxy_alert = now
+    await _alert(
+        "🛑 PROXY ishlamayapti (HTTP 407 — proxy login/paroli qabul qilinmadi).\n"
+        "Instagram eski usulda (cookie) yuklanmayapti — bot hozir faqat Apify orqali ishlayapti.\n\n"
+        "Tekshiring: Decodo (proxy) obunasi/trafigi tugamaganmi, parol o'zgarmaganmi.\n"
+        "Railway → Variables → PROXY_URL qiymati to'g'rimi."
+    )
 
 
 async def _monitor_loop() -> None:
